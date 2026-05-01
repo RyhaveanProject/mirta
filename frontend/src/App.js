@@ -1,5 +1,3 @@
-
-8️⃣ frontend/src/App.js
 import { useEffect, useState, useRef, useCallback } from "react";
 import "./App.css";
 import axios from "axios";
@@ -109,7 +107,6 @@ const usePlayer = (toast) => {
   const repeatRef = useRef(repeat);
   useEffect(() => { repeatRef.current = repeat; }, [repeat]);
 
-  // Initialize YT player once — mount host div OUTSIDE React to avoid reconciliation conflicts
   useEffect(() => {
     let cancelled = false;
     let host = document.getElementById(ytDivId);
@@ -157,10 +154,8 @@ const usePlayer = (toast) => {
       });
     });
     return () => { cancelled = true; };
-    // eslint-disable-next-line
   }, []);
 
-  // Progress ticker
   useEffect(() => {
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     progressTimerRef.current = setInterval(() => {
@@ -193,7 +188,6 @@ const usePlayer = (toast) => {
     setDuration(song.duration || 0);
 
     for (let i = 0; i < 20 && !ytReadyRef.current; i++) {
-      // eslint-disable-next-line no-await-in-loop
       await new Promise((r) => setTimeout(r, 250));
     }
     try {
@@ -699,7 +693,6 @@ const BottomNav = ({ tab, setTab }) => {
   );
 };
 
-/* ---------- Main App ---------- */
 function App() {
   const toast = useToast();
   const player = usePlayer(toast);
@@ -737,7 +730,6 @@ function App() {
       else toast.show("Play a song first");
       setTab((t) => (t === "nowp" ? "home" : t));
     }
-    // eslint-disable-next-line
   }, [tab, player.current]);
 
   let pageEl;
