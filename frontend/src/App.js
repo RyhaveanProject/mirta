@@ -406,7 +406,7 @@ const useDynamicBg = (song) => {
 const BrandHeader = () => (
   <header className="brand-header" data-testid="brand-header">
     <div>
-      <div className="brand-title"><span className="dot" />Ryhavean Spotify</div>
+      <div className="brand-title"><span className="dot" />Raven Spotify</div>
       <div className="brand-sub">Creator @Ryhavean &lt;/&gt;</div>
     </div>
   </header>
@@ -493,8 +493,8 @@ const HomePage = ({ player, toggleFav, isFav }) => {
   return (
     <div className="page" data-testid="home-page">
       {/* VIP Başlıq və Alt mətn */}
-      <h1 className="page-title vip-title">Bu gün nə dinləyirik? ✨</h1>
-      <div className="page-sub vip-subtitle">Ryhavean ilə musiqi dünyasına səyahət et</div>
+      <h1 className="page-title vip-title">Developer Ryhavean <\> </h1>
+      <div className="page-sub vip-subtitle">My Channel : @rveanx</div>
 
       {recent.length > 0 && (
         <section className="section">
