@@ -1,0 +1,200 @@
+# ==========================================
+# Çevre değişkenleri - GÜVENLİK KRİTİK!
+# ==========================================
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+backend/.env
+frontend/.env
+*.env
+
+# ==========================================
+# Python / FastAPI Backend
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+develop-eggs/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.manifest
+*.spec
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Python cache
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# mypy / pylint
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# ==========================================
+# Node.js / React Frontend
+# ==========================================
+node_modules/
+frontend/node_modules/
+/.pnp
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.log
+.yarn/install-state.gz
+
+# Production build
+build/
+frontend/build/
+dist/
+frontend/dist/
+.next/
+out/
+
+# NPM / Yarn logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Optional npm cache
+.npm
+.eslintcache
+
+# ==========================================
+# IDE / Editör dosyaları
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*.bak
+*~
+.project
+.settings/
+.classpath
+.sublime-project
+.sublime-workspace
+
+# ==========================================
+# Sistem dosyaları
+# ==========================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ==========================================
+# Log ve geçici dosyalar
+# ==========================================
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+tmp/
+temp/
+.cache/
+
+# ==========================================
+# Testing & Coverage
+# ==========================================
+coverage/
+*.lcov
+.nyc_output/
+test-results/
+playwright-report/
+.playwright/
+
+# ==========================================
+# Proje-spesifik dosyalar
+# ==========================================
+# yt-dlp indirmeleri ve cache
+*.mp3
+*.m4a
+*.mp4
+*.webm
+yt-dlp-cache/
+
+# Database dump
+*.sql
+*.sqlite
+*.db
+
+# Deploy / CI artifacts
+.vercel
+.netlify
+.render
+.railway
+
+# Memory dosyaları (Emergent ortamından kalmış olabilir)
+memory/
+/app/
+test_reports/
+
+# Backup dosyaları
+*.backup
+*.bak
+*.old
