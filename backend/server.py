@@ -174,7 +174,8 @@ async def stream_info(video_id: str):
                 "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"}
     await _increment_play(video_id, data)
     return {"video_id": video_id, "title": data.get("title"), "artist": data.get("artist"),
-            "duration": data.get("duration"), "thumbnail": data.get("thumbnail")}
+            "duration": data.get("duration"), "thumbnail": data.get("thumbnail"),
+            "stream_url": data.get("stream_url")}
 
 
 @api.get("/recommendations/{video_id}")
