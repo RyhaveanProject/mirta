@@ -1,3 +1,7 @@
+"""
+Ryhavean Spotify - FastAPI backend
+Full music streaming via yt-dlp + MongoDB favorites (anonymous session_id).
+"""
 from fastapi import FastAPI, APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 import httpx
