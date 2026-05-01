@@ -493,7 +493,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
   return (
     <div className="page" data-testid="home-page">
       {/* VIP Başlıq və Alt mətn */}
-      <h1 className="page-title vip-title">Developer Ryhavean <\> </h1>
+     <h1 className="page-title vip-title">Developer Ryhavean {"</>"}</h1>
       <div className="page-sub vip-subtitle">My Channel : @rveanx</div>
 
       {recent.length > 0 && (
