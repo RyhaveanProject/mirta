@@ -56,3 +56,44 @@ input {
 
 .text-dim { color: var(--text-dim); }
 .accent { color: var(--accent); }
+
+/* --- VIP ANIMATED STYLES --- */
+
+.vip-title {
+  background: linear-gradient(90deg, #fff, var(--accent), #fff);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: vip-shine 3s linear infinite;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+
+.vip-subtitle {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  margin-top: 4px;
+  opacity: 0.9;
+}
+
+.vip-section {
+  display: flex;
+  align-items: center;
+  background: linear-gradient(90deg, var(--text), var(--accent), var(--text));
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: vip-shine 5s linear infinite;
+  font-weight: 700;
+}
+
+@keyframes vip-shine {
+  to {
+    background-position: 200% center;
+  }
+}
+
+/* Kiçik bir toxunuş: VIP başlıqların altına zərif kölgə */
+.vip-title, .vip-section {
+  filter: drop-shadow(0 0 8px rgba(30, 215, 96, 0.2));
+}
