@@ -17,12 +17,10 @@ import yt_dlp
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB (Dəyişənlərin mütləq tapılmasını deyil, təhlükəsiz şəkildə oxunmasını təmin etdik)
-mongo_url = os.environ.get("MONGO_URL")
-db_name = os.environ.get("DB_NAME", "ryhavean_db")
-
-client = AsyncIOMotorClient(mongo_url) if mongo_url else None
-db = client[db_name] if client else None
+# MongoDB
+mongo_url = os.environ["MONGO_URL"]
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ["DB_NAME"]]
 
 app = FastAPI(title="Ryhavean Spotify")
 api = APIRouter(prefix="/api")
@@ -151,17 +149,16 @@ async def search(q: str = Query(..., min_length=1), limit: int = 20):
 
 
 async def _increment_play(video_id, data):
-    if db:
-        await db.play_counts.update_one(
-            {"id": video_id},
-            {"$inc": {"plays": 1},
-             "$set": {"title": data.get("title") or "",
-                      "artist": data.get("artist") or "",
-                      "thumbnail": data.get("thumbnail") or "",
-                      "duration": data.get("duration") or 0,
-                      "last_played": datetime.now(timezone.utc).isoformat()}},
-            upsert=True,
-        )
+    await db.play_counts.update_one(
+        {"id": video_id},
+        {"$inc": {"plays": 1},
+         "$set": {"title": data.get("title") or "",
+                  "artist": data.get("artist") or "",
+                  "thumbnail": data.get("thumbnail") or "",
+                  "duration": data.get("duration") or 0,
+                  "last_played": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
 
 
 @api.get("/stream-info/{video_id}")
@@ -209,14 +206,12 @@ async def recommendations(video_id: str):
 # ---- Favorites ----
 @api.get("/favorites")
 async def list_favorites(session_id: str):
-    if not db: return {"favorites": []}
     items = await db.favorites.find({"session_id": session_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return {"favorites": items}
 
 
 @api.post("/favorites")
 async def add_favorite(body: FavoriteCreate):
-    if not db: return {"ok": False}
     doc = {"session_id": body.session_id, "song_id": body.song.id,
            "title": body.song.title, "artist": body.song.artist,
            "duration": body.song.duration, "thumbnail": body.song.thumbnail,
@@ -235,7 +230,6 @@ async def add_favorite(body: FavoriteCreate):
 
 @api.delete("/favorites/{song_id}")
 async def remove_favorite(song_id: str, session_id: str):
-    if not db: return {"ok": False}
     res = await db.favorites.delete_one({"session_id": session_id, "song_id": song_id})
     if res.deleted_count:
         await db.like_counts.update_one(
@@ -246,7 +240,6 @@ async def remove_favorite(song_id: str, session_id: str):
 # ---- Recently played ----
 @api.post("/recently-played")
 async def add_recent(body: RecentCreate):
-    if not db: return {"ok": False}
     doc = {"session_id": body.session_id, "song_id": body.song.id,
            "title": body.song.title, "artist": body.song.artist,
            "duration": body.song.duration, "thumbnail": body.song.thumbnail,
@@ -259,7 +252,6 @@ async def add_recent(body: RecentCreate):
 
 @api.get("/recently-played")
 async def list_recent(session_id: str, limit: int = 20):
-    if not db: return {"recent": []}
     items = await db.recently_played.find({"session_id": session_id}, {"_id": 0}).sort("played_at", -1).to_list(limit)
     return {"recent": items}
 
@@ -267,7 +259,6 @@ async def list_recent(session_id: str, limit: int = 20):
 # ---- Trending ----
 @api.get("/trending")
 async def trending(limit: int = 20):
-    if not db: return {"trending": []}
     items = await db.like_counts.find({"likes": {"$gt": 0}}, {"_id": 0}).sort("likes", -1).to_list(limit)
     if not items:
         items = await db.play_counts.find({}, {"_id": 0}).sort("plays", -1).to_list(limit)
@@ -307,5 +298,4 @@ app.add_middleware(
 
 @app.on_event("shutdown")
 async def _shutdown():
-    if client:
-        client.close()
+    client.close()
