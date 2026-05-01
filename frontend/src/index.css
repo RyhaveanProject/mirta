@@ -1,0 +1,110 @@
+fastapi==0.110.1
+uvicorn==0.25.0
+python-dotenv>=1.0.1
+pymongo==4.5.0
+motor==3.3.1
+pydantic>=2.6.4
+httpx>=0.28
+yt-dlp>=2026.3.17
+python-multipart>=0.0.9
+3️⃣ backend/.env
+MONGO_URL=mongodb://localhost:27017
+DB_NAME=ryhavean_spotify
+CORS_ORIGINS=*
+4️⃣ frontend/package.json
+{
+  "name": "ryhavean-spotify-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "axios": "^1.8.4",
+    "lucide-react": "^0.507.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-scripts": "5.0.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test"
+  },
+  "browserslist": {
+    "production": [">0.2%", "not dead", "not op_mini all"],
+    "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
+  }
+}
+5️⃣ frontend/.env
+REACT_APP_BACKEND_URL=http://localhost:8001
+6️⃣ frontend/src/index.js
+import React from "react";
+import ReactDOM from "react-dom/client";
+import "./index.css";
+import App from "./App";
+
+// Premium fonts
+const link = document.createElement("link");
+link.rel = "stylesheet";
+link.href = "https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Outfit:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap";
+document.head.appendChild(link);
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+7️⃣ frontend/src/index.css
+:root {
+  --bg: #0a0a0b;
+  --bg-elev: #17181c;
+  --bg-card: #1d1e24;
+  --text: #f4f4f5;
+  --text-dim: #a1a1aa;
+  --text-faint: #6b7280;
+  --accent: #1ed760;
+  --accent-hover: #1fdf64;
+  --accent-dim: rgba(30, 215, 96, 0.15);
+  --danger: #ff4d6d;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --dyn-grad: radial-gradient(at top, #2a2a35, #0a0a0b);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Sora", "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+body {
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(30, 215, 96, 0.08), transparent 60%),
+    radial-gradient(900px 500px at 90% 110%, rgba(100, 100, 255, 0.07), transparent 60%),
+    var(--bg);
+}
+
+button {
+  font-family: inherit;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+input {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+.text-dim { color: var(--text-dim); }
+.accent { color: var(--accent); }
