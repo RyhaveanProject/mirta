@@ -3,7 +3,8 @@ Ryhavean Spotify - FastAPI backend
 Full music streaming via yt-dlp + MongoDB favorites (anonymous session_id).
 """
 from fastapi import FastAPI, APIRouter, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import httpx
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -299,6 +300,17 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"],
 )
 
+# ---------- FRONTEND SERVİSİ ----------
+# Bu hissə saytın (React) görünməsini təmin edir.
+# directory yolunun düzgünlüyündən əmin ol (../frontend/build)
+try:
+    app.mount("/", StaticFiles(directory="../frontend/build", html=True), name="static")
+
+    @app.get("/{full_path:path}")
+    async def serve_react_app(full_path: str):
+        return FileResponse("../frontend/build/index.html")
+except Exception as e:
+    logger.error(f"Frontend mount failed: {e}")
 
 @app.on_event("shutdown")
 async def _shutdown():
