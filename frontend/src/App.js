@@ -492,13 +492,14 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
   return (
     <div className="page" data-testid="home-page">
-      <h1 className="page-title">Salam 👋</h1>
-      <div className="page-sub">Azərbaycan Top Mahnıları — istədiyin zaman, istədiyin yerdə</div>
+      {/* VIP Başlıq və Alt mətn */}
+      <h1 className="page-title vip-title">Bu gün nə dinləyirik? ✨</h1>
+      <div className="page-sub vip-subtitle">Ryhavean ilə musiqi dünyasına səyahət et</div>
 
       {recent.length > 0 && (
         <section className="section">
           <div className="section-head">
-            <div className="section-title"><Clock size={16} style={{marginRight: 6, display:"inline"}} /> Son dinlənilənlər</div>
+            <div className="section-title vip-section"><Clock size={16} style={{marginRight: 6, display:"inline"}} /> Son dinlənilənlər</div>
           </div>
           <div className="grid-2">
             {recent.slice(0, 6).map((s) => (
@@ -513,7 +514,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title"><Sparkles size={16} style={{marginRight: 6, display:"inline"}} /> Azərbaycan Top 🇦🇿</div>
+          <div className="section-title vip-section"><Sparkles size={16} style={{marginRight: 6, display:"inline"}} /> Azərbaycan Top 🇦🇿</div>
         </div>
         {loading ? (
           <div className="row-scroll">{[...Array(5)].map((_, i) => <Skeleton key={i} w="150px" h="190px" />)}</div>
@@ -529,7 +530,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title">Miri Yusif & daha çox</div>
+          <div className="section-title vip-section">Miri Yusif & daha çox</div>
         </div>
         {loading ? (
           <div className="row-scroll">{[...Array(5)].map((_, i) => <Skeleton key={i} w="150px" h="190px" />)}</div>
@@ -545,7 +546,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title">Aygün Kazımova kolleksiyası</div>
+          <div className="section-title vip-section">Aygün Kazımova kolleksiyası</div>
         </div>
         {loading ? (
           <div className="row-scroll">{[...Array(5)].map((_, i) => <Skeleton key={i} w="150px" h="190px" />)}</div>
@@ -561,7 +562,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title"><TrendingUp size={16} style={{marginRight: 6, display:"inline"}} /> Ən çox bəyənilənlər</div>
+          <div className="section-title vip-section"><TrendingUp size={16} style={{marginRight: 6, display:"inline"}} /> Ən çox bəyənilənlər</div>
         </div>
         {trending.length ? (
           <div className="row-scroll">
@@ -623,7 +624,7 @@ const SearchPage = ({ player, toggleFav, isFav }) => {
 
   return (
     <div className="page" data-testid="search-page">
-      <h1 className="page-title">Axtarış</h1>
+      <h1 className="page-title vip-title">Axtarış</h1>
       <div className="search-wrap">
         <SearchIcon className="search-icon" size={18} />
         <input
@@ -659,7 +660,7 @@ const SearchPage = ({ player, toggleFav, isFav }) => {
           </div>
           {activeCat && (
             <div className="section search-results">
-              <div className="section-title" style={{marginBottom: 12, textTransform: "capitalize"}}>{activeCat}</div>
+              <div className="section-title vip-section" style={{marginBottom: 12, textTransform: "capitalize"}}>{activeCat}</div>
               <div className="song-list">
                 {catResults.map((s) => (
                   <SongRow key={s.id} song={s} onPlay={player.play}
@@ -700,8 +701,8 @@ const FavoritesPage = ({ player, favs, toggleFav, isFav }) => {
 
   return (
     <div className="page" data-testid="favorites-page">
-      <h1 className="page-title">Sevimlilərin</h1>
-      <div className="page-sub">{favs.length} bəyənilmiş mahnı</div>
+      <h1 className="page-title vip-title">Sevimlilərin</h1>
+      <div className="page-sub vip-subtitle">{favs.length} bəyənilmiş mahnı</div>
 
       {favs.length === 0 ? (
         <div className="empty">İstənilən mahnının ürəyinə tıkla və burada saxlansın</div>
@@ -717,7 +718,7 @@ const FavoritesPage = ({ player, favs, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title"><TrendingUp size={16} style={{marginRight:6, display:"inline"}} /> Ən çox bəyənilənlər</div>
+          <div className="section-title vip-section"><TrendingUp size={16} style={{marginRight:6, display:"inline"}} /> Ən çox bəyənilənlər</div>
         </div>
         {trending.length === 0 ? (
           <div className="empty">Hələ bəyəni yoxdur. İlk sən ol!</div>
