@@ -11,6 +11,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import asyncio
+import urllib.request
+import urllib.error
+import json as _json
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -44,6 +47,43 @@ YDL_STREAM_OPTS = {
     "noplaylist": True, "socket_timeout": 15,
 }
 
+# Public Piped API instances
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://pipedapi.reallyaweso.me",
+    "https://api.piped.yt",
+]
+
+def _piped_stream(video_id: str):
+    """Get audio stream URL from a public Piped instance."""
+    for base in PIPED_INSTANCES:
+        try:
+            req = urllib.request.Request(
+                f"{base}/streams/{video_id}",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                if r.status != 200:
+                    continue
+                data = _json.loads(r.read().decode("utf-8"))
+            audios = data.get("audioStreams") or []
+            if not audios:
+                continue
+            # En yüksək bitrate-li m4a/mp4 audio
+            audios.sort(key=lambda a: (a.get("bitrate") or 0), reverse=True)
+            best = audios[0]
+            thumb = data.get("thumbnailUrl") or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+            return {
+                "stream_url": best.get("url"),
+                "title": data.get("title") or "",
+                "artist": data.get("uploader") or "",
+                "duration": int(data.get("duration") or 0),
+                "thumbnail": thumb,
+            }
+        except Exception:
+            continue
+    return None
 
 def _search_sync(query: str, limit: int = 20):
     opts = dict(YDL_SEARCH_OPTS)
@@ -75,10 +115,19 @@ def _search_sync(query: str, limit: int = 20):
 
 
 def _stream_sync(video_id: str):
+    # Əvvəlcə Piped-i cəhd et (cloud hosting-də daha stabil)
+    piped = _piped_stream(video_id)
+    if piped and piped.get("stream_url"):
+        return piped
+
+    # Fallback: yt-dlp
     opts = dict(YDL_STREAM_OPTS)
     url = f"https://www.youtube.com/watch?v={video_id}"
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception:
+        return None
     if not info: return None
     audio_url = info.get("url")
     if not audio_url:
