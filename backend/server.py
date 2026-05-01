@@ -3,8 +3,7 @@ Ryhavean Spotify - FastAPI backend
 Full music streaming via yt-dlp + MongoDB favorites (anonymous session_id).
 """
 from fastapi import FastAPI, APIRouter, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse, StreamingResponse
 import httpx
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -53,18 +52,15 @@ def _search_sync(query: str, limit: int = 20):
     entries = info.get("entries", []) if info else []
     results = []
     for e in entries:
-        if not e:
-            continue
+        if not e: continue
         vid = e.get("id") or e.get("video_id")
-        if not vid:
-            continue
+        if not vid: continue
         thumbs = e.get("thumbnails") or []
         thumb = None
         for t in reversed(thumbs):
             u = t.get("url") or ""
             if u and "vi_webp" not in u:
-                thumb = u
-                break
+                thumb = u; break
         if not thumb:
             thumb = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
         results.append({
@@ -83,8 +79,7 @@ def _stream_sync(video_id: str):
     url = f"https://www.youtube.com/watch?v={video_id}"
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
-    if not info:
-        return None
+    if not info: return None
     audio_url = info.get("url")
     if not audio_url:
         formats = info.get("formats") or []
@@ -97,8 +92,7 @@ def _stream_sync(video_id: str):
     for t in reversed(thumbs):
         u = t.get("url") or ""
         if u and "vi_webp" not in u:
-            thumb = u
-            break
+            thumb = u; break
     if not thumb:
         thumb = f"https://i.ytimg.com/vi/{info.get('id') or ''}/hqdefault.jpg"
     return {
@@ -113,7 +107,6 @@ def _stream_sync(video_id: str):
 async def yt_search(query, limit=20):
     return await asyncio.to_thread(_search_sync, query, limit)
 
-
 async def yt_stream(video_id):
     return await asyncio.to_thread(_stream_sync, video_id)
 
@@ -126,11 +119,9 @@ class Song(BaseModel):
     duration: int = 0
     thumbnail: str = ""
 
-
 class FavoriteCreate(BaseModel):
     session_id: str
     song: Song
-
 
 class RecentCreate(BaseModel):
     session_id: str
@@ -157,10 +148,8 @@ async def _increment_play(video_id, data):
     await db.play_counts.update_one(
         {"id": video_id},
         {"$inc": {"plays": 1},
-         "$set": {"title": data.get("title") or "",
-                  "artist": data.get("artist") or "",
-                  "thumbnail": data.get("thumbnail") or "",
-                  "duration": data.get("duration") or 0,
+         "$set": {"title": data.get("title") or "", "artist": data.get("artist") or "",
+                  "thumbnail": data.get("thumbnail") or "", "duration": data.get("duration") or 0,
                   "last_played": datetime.now(timezone.utc).isoformat()}},
         upsert=True,
     )
@@ -179,15 +168,13 @@ async def stream_info(video_id: str):
             if rs:
                 data = {"title": rs[0]["title"], "artist": rs[0]["artist"],
                         "duration": rs[0]["duration"], "thumbnail": rs[0]["thumbnail"]}
-        except Exception:
-            pass
+        except Exception: pass
     if not data:
         data = {"title": "Unknown", "artist": "Unknown", "duration": 0,
                 "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"}
     await _increment_play(video_id, data)
-    return {"video_id": video_id, "title": data.get("title"),
-            "artist": data.get("artist"), "duration": data.get("duration"),
-            "thumbnail": data.get("thumbnail")}
+    return {"video_id": video_id, "title": data.get("title"), "artist": data.get("artist"),
+            "duration": data.get("duration"), "thumbnail": data.get("thumbnail")}
 
 
 @api.get("/recommendations/{video_id}")
@@ -196,10 +183,8 @@ async def recommendations(video_id: str):
         meta = None
         try:
             rs = await yt_search(video_id, limit=1)
-            if rs:
-                meta = rs[0]
-        except Exception:
-            pass
+            if rs: meta = rs[0]
+        except Exception: pass
         query = (meta.get("artist") if meta else None) or (meta.get("title") if meta else None) or "top music hits"
         results = await yt_search(query, limit=20)
         results = [r for r in results if r["id"] != video_id]
@@ -280,8 +265,7 @@ FEATURED_QUERIES = [
 
 @api.get("/featured")
 async def featured(category: str = "top hits 2025"):
-    if category not in FEATURED_QUERIES:
-        category = "top hits 2025"
+    if category not in FEATURED_QUERIES: category = "top hits 2025"
     results = await yt_search(category, limit=15)
     return {"category": category, "results": results}
 
@@ -300,17 +284,6 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"],
 )
 
-# ---------- FRONTEND SERVİSİ ----------
-# Bu hissə saytın (React) görünməsini təmin edir.
-# directory yolunun düzgünlüyündən əmin ol (../frontend/build)
-try:
-    app.mount("/", StaticFiles(directory="../frontend/build", html=True), name="static")
-
-    @app.get("/{full_path:path}")
-    async def serve_react_app(full_path: str):
-        return FileResponse("../frontend/build/index.html")
-except Exception as e:
-    logger.error(f"Frontend mount failed: {e}")
 
 @app.on_event("shutdown")
 async def _shutdown():
