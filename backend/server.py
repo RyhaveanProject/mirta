@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Query, BackgroundTasks, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -39,7 +39,6 @@ YDL_STREAM_OPTS = {
 }
 
 # ---------- TTL cache ----------
-# key -> (expires_ts, value)
 _CACHE: dict = {}
 _CACHE_TTL_FEATURED = 60 * 60 * 6   # 6 hours
 _CACHE_TTL_SEARCH   = 60 * 30       # 30 min
@@ -86,7 +85,6 @@ def _search_sync(query: str, limit: int = 20):
         })
     return results
 
-
 def _stream_sync(video_id: str):
     opts = dict(YDL_STREAM_OPTS)
     url = f"https://www.youtube.com/watch?v={video_id}"
@@ -116,7 +114,6 @@ def _stream_sync(video_id: str):
         "thumbnail": thumb,
     }
 
-
 async def yt_search(query, limit=20, cache=True, ttl=_CACHE_TTL_SEARCH):
     key = f"search::{query}::{limit}"
     if cache:
@@ -127,7 +124,6 @@ async def yt_search(query, limit=20, cache=True, ttl=_CACHE_TTL_SEARCH):
     if cache and data:
         cache_set(key, data, ttl)
     return data
-
 
 async def yt_stream(video_id):
     return await asyncio.to_thread(_stream_sync, video_id)
@@ -200,15 +196,20 @@ async def stream_info(video_id: str):
             "stream_url": data.get("stream_url")}
 
 
+# FIX: Mahnı bitəndə fərdi tövsiyələr verir (YouTube tərzi)
 @api.get("/recommendations/{video_id}")
-async def recommendations(video_id: str):
+async def recommendations(video_id: str, session_id: Optional[str] = None):
     try:
-        meta = None
-        try:
-            rs = await yt_search(video_id, limit=1, cache=False)
-            if rs: meta = rs[0]
-        except Exception: pass
-        query = (meta.get("artist") if meta else None) or (meta.get("title") if meta else None) or "azerbaijan top mahnilar"
+        query = "azerbaijan top mahnilar 2025"
+        if session_id:
+            # İstifadəçinin son dinlədiyi 3 mahnını tapırıq
+            recent = await db.recently_played.find({"session_id": session_id}).sort("played_at", -1).to_list(3)
+            if recent:
+                # Son dinlənilən sənətçilərə görə axtarış edir
+                artists = [r["artist"] for r in recent if r["artist"] != "Unknown artist"]
+                if artists:
+                    query = f"{artists[0]} oxşar mahnılar"
+
         results = await yt_search(query, limit=20)
         results = [r for r in results if r["id"] != video_id]
         return {"results": results}
@@ -216,7 +217,7 @@ async def recommendations(video_id: str):
         return {"results": []}
 
 
-# ---- Favorites ----
+# ---- Favorites (Hər istifadəçiyə 1 like və düzgün sayğac) ----
 @api.get("/favorites")
 async def list_favorites(session_id: str):
     items = await db.favorites.find({"session_id": session_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
@@ -225,21 +226,22 @@ async def list_favorites(session_id: str):
 
 @api.post("/favorites")
 async def add_favorite(body: FavoriteCreate):
+    existing = await db.favorites.find_one({"session_id": body.session_id, "song_id": body.song.id})
+    if existing:
+        return {"ok": True, "message": "Already liked by this session"}
+
     doc = {"session_id": body.session_id, "song_id": body.song.id,
            "title": body.song.title, "artist": body.song.artist,
            "duration": body.song.duration, "thumbnail": body.song.thumbnail,
            "created_at": datetime.now(timezone.utc).isoformat()}
-    existing = await db.favorites.find_one({"session_id": body.session_id, "song_id": body.song.id})
-    await db.favorites.update_one(
-        {"session_id": body.session_id, "song_id": body.song.id},
-        {"$set": doc}, upsert=True)
-    if not existing:
-        await db.like_counts.update_one(
-            {"id": body.song.id},
-            {"$inc": {"likes": 1},
-             "$set": {"title": body.song.title, "artist": body.song.artist,
-                      "thumbnail": body.song.thumbnail, "duration": body.song.duration}},
-            upsert=True)
+    
+    await db.favorites.insert_one(doc)
+    await db.like_counts.update_one(
+        {"id": body.song.id},
+        {"$inc": {"likes": 1},
+         "$set": {"title": body.song.title, "artist": body.song.artist,
+                  "thumbnail": body.song.thumbnail, "duration": body.song.duration}},
+        upsert=True)
     return {"ok": True}
 
 
@@ -281,36 +283,15 @@ async def trending(limit: int = 20):
 
 
 # ---- Featured (Azerbaijani TOP) ----
-AZ_ARTIST_QUERIES = [
-    "Miri Yusif",
-    "Aygün Kazımova",
-    "Çakal rap",
-    "Alizade Azerbaijan",
-    "Lvbel C5",
-]
-AZ_TOP_QUERIES = [
-    "azerbaijan top mahnilar 2025",
-    "azeri top music 2025",
-    "azerbaycan yeni mahnilar",
-    "azeri hit mahnilar",
-]
-FEATURED_QUERIES = AZ_TOP_QUERIES + AZ_ARTIST_QUERIES + [
-    "azeri pop 2025",
-    "azeri rap 2025",
-    "azerbaycan rep",
-    "Turkish Azeri hits",
-]
+AZ_ARTIST_QUERIES = ["Miri Yusif", "Aygün Kazımova", "Çakal rap", "Alizade Azerbaijan", "Lvbel C5"]
+AZ_TOP_QUERIES = ["azerbaijan top mahnilar 2025", "azeri top music 2025", "azerbaycan yeni mahnilar", "azeri hit mahnilar"]
+FEATURED_QUERIES = AZ_TOP_QUERIES + AZ_ARTIST_QUERIES + ["azeri pop 2025", "azeri rap 2025", "azerbaycan rep", "Turkish Azeri hits"]
 
 
 async def _warm_cache():
-    to_warm = AZ_TOP_QUERIES + AZ_ARTIST_QUERIES
-    logger.info("Warming featured cache for %d queries...", len(to_warm))
-    for q in to_warm:
-        try:
-            await yt_search(q, limit=15, ttl=_CACHE_TTL_FEATURED)
-        except Exception:
-            logger.warning("warm failed for %s", q)
-    logger.info("Featured cache warmed.")
+    for q in AZ_TOP_QUERIES[:2]:
+        try: await yt_search(q, limit=15, ttl=_CACHE_TTL_FEATURED)
+        except Exception: pass
 
 
 @api.get("/featured")
@@ -324,53 +305,41 @@ async def featured_categories():
     return {"categories": FEATURED_QUERIES}
 
 
-@api.get("/az-top")
-async def az_top(limit: int = 20):
-    merged: list = []
-    seen = set()
-    for q in AZ_TOP_QUERIES + AZ_ARTIST_QUERIES:
-        try:
-            rs = await yt_search(q, limit=10, ttl=_CACHE_TTL_FEATURED)
-        except Exception:
-            rs = []
-        for s in rs:
-            if s["id"] in seen: continue
-            seen.add(s["id"])
-            merged.append(s)
-            if len(merged) >= limit * 2: break
-        if len(merged) >= limit * 2: break
-    return {"results": merged[:limit]}
-
-
+# FIX: Sayt açılanda istifadəçinin zövqünə uyğun mahnılar gətirir
 @api.get("/home-bootstrap")
-async def home_bootstrap():
-    top_task = asyncio.create_task(yt_search(AZ_TOP_QUERIES[0], limit=15, ttl=_CACHE_TTL_FEATURED))
+async def home_bootstrap(session_id: Optional[str] = None):
+    # Standart axtarışlar
+    query_top = AZ_TOP_QUERIES[0]
+    query_discovery = AZ_ARTIST_QUERIES[1]
+
+    if session_id:
+        # Tarixçəni yoxla
+        recent = await db.recently_played.find({"session_id": session_id}).sort("played_at", -1).to_list(5)
+        if len(recent) >= 3:
+            # Əgər 3-dən çox mahnı dinləyibsə, zövqünə uyğun axtarış et
+            fav_artist = recent[0]["artist"]
+            query_discovery = f"{fav_artist} oxşar hitlər"
+
+    top_task = asyncio.create_task(yt_search(query_top, limit=15, ttl=_CACHE_TTL_FEATURED))
     artists_task = asyncio.create_task(yt_search(AZ_ARTIST_QUERIES[0], limit=15, ttl=_CACHE_TTL_FEATURED))
-    chill_task = asyncio.create_task(yt_search(AZ_ARTIST_QUERIES[1], limit=15, ttl=_CACHE_TTL_FEATURED))
-    top, artists, chill = await asyncio.gather(top_task, artists_task, chill_task, return_exceptions=True)
+    discovery_task = asyncio.create_task(yt_search(query_discovery, limit=15, ttl=_CACHE_TTL_FEATURED))
+    
+    top, artists, disc = await asyncio.gather(top_task, artists_task, discovery_task, return_exceptions=True)
     def _ok(x): return x if isinstance(x, list) else []
+    
     return {
         "top": _ok(top),
         "artists": _ok(artists),
-        "discovery": _ok(chill),
+        "discovery": _ok(disc),
     }
 
 
 app.include_router(api)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=False,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
 async def _startup():
     asyncio.create_task(_warm_cache())
-
 
 @app.on_event("shutdown")
 async def _shutdown():
