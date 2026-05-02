@@ -1,3 +1,9 @@
+/* Safe Area Dəyişənləri */
+:root {
+  --sat: env(safe-area-inset-top);
+  --sab: env(safe-area-inset-bottom);
+}
+
 .app-shell {
   min-height: 100vh;
   display: flex;
@@ -23,21 +29,22 @@
   background: linear-gradient(180deg, rgba(10,10,11,0.2) 0%, rgba(10,10,11,0.95) 70%);
 }
 
-/* Header - Nizamlandı */
+/* Header - iPhone Çentiği üçün nizamlandı */
 .brand-header {
   position: sticky;
   top: 0;
   z-index: 20;
-  padding: 18px 20px 12px;
+  /* Üst boşluq: Cihazın çentiği + 18px padding */
+  padding: calc(var(--sat) + 18px) 20px 12px;
   display: flex;
-  align-items: center; /* Elementləri mərkəzə gətirir */
+  align-items: center; 
   justify-content: space-between;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   background: linear-gradient(180deg, rgba(10,10,11,0.9), rgba(10,10,11,0.55));
 }
 
-/* Status Pill - İkon və rəqəm yan-yana düzüldü */
+/* Status Pill */
 .status-pill {
   display: flex;
   align-items: center;
@@ -95,6 +102,9 @@
   flex: 1;
   padding: 8px 18px 180px;
   animation: page-in 0.4s ease;
+  /* Kənarlardan sıxılma qarşısı alınır */
+  padding-left: calc(env(safe-area-inset-left) + 18px);
+  padding-right: calc(env(safe-area-inset-right) + 18px);
 }
 @keyframes page-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -354,10 +364,11 @@
   100% { background-position: -200% 0; }
 }
 
-/* Mini player */
+/* Mini player - iOS Alt xətti üçün nizamlandı */
 .mini-player {
   position: fixed;
-  bottom: 72px;
+  /* Alt boşluq: Cihazın home bar boşluğu + 72px */
+  bottom: calc(var(--sab) + 72px);
   left: 10px;
   right: 10px;
   height: 64px;
@@ -410,7 +421,7 @@
   transition: width 0.25s linear;
 }
 
-/* Full player */
+/* Full player - Tam ekran və Safe Area */
 .full-player {
   position: fixed;
   inset: 0;
@@ -419,6 +430,9 @@
   display: flex;
   flex-direction: column;
   animation: fade-in 0.35s ease;
+  /* Üst və alt boşluqların nəzərə alınması */
+  padding-top: var(--sat);
+  padding-bottom: var(--sab);
 }
 @keyframes fade-in {
   from { opacity: 0; }
@@ -559,10 +573,11 @@
   50% { height: 18px; }
 }
 
-/* Bottom nav */
+/* Bottom nav - iOS Alt xətti üçün nizamlandı */
 .bottom-nav {
   position: fixed;
-  bottom: 8px;
+  /* Alt boşluq: Cihazın home bar boşluğu + 8px padding */
+  bottom: calc(var(--sab) + 8px);
   left: 10px;
   right: 10px;
   height: 62px;
