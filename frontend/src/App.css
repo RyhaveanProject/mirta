@@ -15,7 +15,7 @@
   transition: background 1.2s ease;
 }
 .dynamic-bg::after {
-  content: \"\";
+  content: "";
   position: absolute;
   inset: 0;
   backdrop-filter: blur(80px);
@@ -36,27 +36,55 @@
   -webkit-backdrop-filter: blur(14px);
   background: linear-gradient(180deg, rgba(10,10,11,0.9), rgba(10,10,11,0.55));
 }
+
+/* Status Pill - Göz və Rəqəm üçün Yeni Stil */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 3px 10px;
+  border-radius: 12px;
+  margin-right: 12px;
+  vertical-align: middle;
+  border: 1px solid rgba(29, 185, 84, 0.15);
+}
+
+.active-num {
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 700;
+  font-family: "Sora", sans-serif;
+  letter-spacing: 0.02em;
+}
+
 .brand-title {
-  font-family: \"Sora\", sans-serif;
+  font-family: "Sora", sans-serif;
   font-weight: 700;
   font-size: 20px;
   letter-spacing: -0.02em;
   line-height: 1.1;
+  display: flex;
+  align-items: center;
 }
+
 .brand-title .dot {
   display: inline-block;
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 7px; 
+  height: 7px; 
+  border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 12px var(--accent);
-  margin-right: 8px;
+  margin-right: 2px;
   animation: pulse 2s ease infinite;
 }
+
 .brand-sub {
   font-size: 11px;
   color: var(--text-dim);
   margin-top: 2px;
   letter-spacing: 0.04em;
-  font-family: \"JetBrains Mono\", monospace;
+  font-family: "JetBrains Mono", monospace;
 }
 
 @keyframes pulse {
@@ -76,7 +104,7 @@
 }
 
 .page-title {
-  font-family: \"Sora\", sans-serif;
+  font-family: "Sora", sans-serif;
   font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -408,7 +436,7 @@
   to { opacity: 1; }
 }
 .full-player::before {
-  content: \"\";
+  content: "";
   position: absolute; inset: 0;
   background: linear-gradient(180deg, rgba(10,10,11,0.35), rgba(10,10,11,0.85));
   pointer-events: none;
@@ -457,7 +485,7 @@
 }
 .art-inner.playing { animation-play-state: running; }
 .art-wrap::after {
-  content: \"\";
+  content: "";
   position: absolute;
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
@@ -473,7 +501,7 @@
 
 .track-info { text-align: center; }
 .track-info .t {
-  font-family: \"Sora\", sans-serif;
+  font-family: "Sora", sans-serif;
   font-size: 22px;
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -616,7 +644,7 @@
 .nav-btn.active { color: var(--accent); }
 .nav-btn.active svg { transform: translateY(-2px) scale(1.08); }
 .nav-btn.active::after {
-  content: \"\";
+  content: "";
   position: absolute;
   bottom: 2px;
   width: 4px; height: 4px;
@@ -637,7 +665,7 @@
 
 /* Trending ranking number */
 .rank-num {
-  font-family: \"Sora\", sans-serif;
+  font-family: "Sora", sans-serif;
   font-weight: 800;
   font-size: 28px;
   color: rgba(255,255,255,0.25);
