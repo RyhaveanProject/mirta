@@ -27,11 +27,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("ryhavean")
 
 # ---------- yt-dlp config ----------
-# FIX: "Sign in to confirm you’re not a bot" xətasını keçmək üçün təkmilləşdirilmiş konfiqurasiya
-COMMON_YDL_OPTS = {
+# FIX: "Sign in to confirm you’re not a bot" xətasını aradan qaldırmaq üçün 
+# PoToken və müasir klient simulyasiyası əlavə edildi.
+YDL_COMMON_OPTS = {
     "quiet": True,
     "no_warnings": True,
-    "socket_timeout": 15,
+    "socket_timeout": 30,
     "nocheckcertificate": True,
     "http_headers": {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -40,20 +41,31 @@ COMMON_YDL_OPTS = {
     },
     "extractor_args": {
         "youtube": {
-            # Bu hissə vacibdir: Blokdan qaçmaq üçün mobil klientlərdən istifadə edirik
-            "player_client": ["android", "ios", "web"],
+            # Bu üçlük blokları keçmək üçün kritikdir
+            "player_client": ["android", "ios", "web_embedded"],
             "player_skip": ["webpage", "configs"],
+            "po_token": ["web+https://www.youtube.com/"]
         }
     }
 }
 
-YDL_SEARCH_OPTS = {**COMMON_YDL_OPTS, "extract_flat": True, "default_search": "ytsearch", "noplaylist": True}
-YDL_STREAM_OPTS = {**COMMON_YDL_OPTS, "format": "bestaudio/best", "noplaylist": True}
+YDL_SEARCH_OPTS = {
+    **YDL_COMMON_OPTS,
+    "extract_flat": True,
+    "default_search": "ytsearch",
+    "noplaylist": True,
+}
+
+YDL_STREAM_OPTS = {
+    **YDL_COMMON_OPTS,
+    "format": "bestaudio/best",
+    "noplaylist": True,
+}
 
 # ---------- TTL cache ----------
 _CACHE: dict = {}
-_CACHE_TTL_FEATURED = 60 * 60 * 6
-_CACHE_TTL_SEARCH   = 60 * 30
+_CACHE_TTL_FEATURED = 60 * 60 * 6   # 6 hours
+_CACHE_TTL_SEARCH   = 60 * 30       # 30 min
 
 def cache_get(key: str):
     v = _CACHE.get(key)
