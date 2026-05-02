@@ -559,14 +559,12 @@ const HomePage = ({ player, toggleFav, isFav }) => {
           <div className="section-head">
             <div className="section-title vip-section"><Clock size={16} style={{marginRight: 6, display:"inline"}} /> Son dinlənilənlər</div>
           </div>
-          <div className="grid-2">
-            {recent.slice(0, 6).map((s) => (
-              <div key={s.id} className="grid-card" onClick={() => player.play(s)} data-testid={`recent-${s.id}`}>
-                <img className="cover" src={s.thumbnail} alt="" loading="lazy" />
-                <div className="title">{s.title}</div>
-              </div>
-            ))}
-          </div>
+          <div className="row-scroll">
+  {recent.slice(0, 10).map((s) => (
+    <SongCard key={s.id} song={s} onPlay={player.play}
+              onLike={toggleFav} liked={isFav(s.id)} />
+  ))}
+</div>
         </section>
       )}
 
