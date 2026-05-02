@@ -220,8 +220,6 @@ const usePlayer = (toast) => {
     const onVisibilityChange = () => {
       const p = ytPlayerRef.current;
       if (!p || !ytReadyRef.current) return;
-      // iOS and other browsers aldadılması: 
-      // Visibility dəyişəndə pause əmri göndərilmir, sessiya saxlanılır.
     };
 
     const keepAliveInterval = setInterval(() => {
@@ -229,7 +227,6 @@ const usePlayer = (toast) => {
       if (!p || !ytReadyRef.current) return;
       try {
         const state = p.getPlayerState ? p.getPlayerState() : -1;
-        // Əgər playing state-dəyiksə amma player dayanıbsa (state 2), yenidən başlat (Android üçün vacibdir)
         if (playingRef.current && state === 2) {
           p.playVideo();
         }
@@ -941,6 +938,7 @@ function App() {
       refreshFavs();
     } finally {
       setLikePending((p) => { const { [s.id]: _, ...rest } = p; return rest; });
+      refreshFavs(); // Xətanın düzəldildiyi əsas hissə: Məlumatları bazadan təkrar çəkir
     }
   }, [favs, likePending, player.sessionId, refreshFavs, toast]);
 
