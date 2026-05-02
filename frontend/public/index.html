@@ -2,12 +2,83 @@
 <html lang="az">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-    <meta name="theme-color" content="#0a0a0b" />
-    <title>Ryhavean @Ryhavean </title>
+
+    <!-- Viewport: iOS standalone safe-area + disable user scaling -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+
+    <!-- Theme -->
+    <meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- SEO basics -->
+    <meta name="description" content="Ryhavean - Spotify" />
+    <meta name="application-name" content="Ryhavean" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- PWA manifest -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Favicons -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    <!-- iOS add-to-homescreen -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Ryhavean" />
+
+    <!-- iOS touch icons -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/icons/icon-167.png" />
+
+    <!-- iOS splash screens -->
+    <link rel="apple-touch-startup-image" href="/icons/splash-2048x2732.png"
+          media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2)" />
+    <link rel="apple-touch-startup-image" href="/icons/splash-1242x2688.png"
+          media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3)" />
+    <link rel="apple-touch-startup-image" href="/icons/splash-1125x2436.png"
+          media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)" />
+    <link rel="apple-touch-startup-image" href="/icons/splash-828x1792.png"
+          media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2)" />
+    <link rel="apple-touch-startup-image" href="/icons/splash-750x1334.png"
+          media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2)" />
+
+    <!-- Windows -->
+    <meta name="msapplication-config" content="/browserconfig.xml" />
+    <meta name="msapplication-TileColor" content="#0a0a0b" />
+    <meta name="msapplication-TileImage" content="/icons/icon-144.png" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Ryhavean" />
+    <meta property="og:title" content="Ryhavean - Music" />
+    <meta property="og:description" content="Developer Ryhavean" />
+    <meta property="og:image" content="/icons/icon-512.png" />
+
+    <!-- Inline critical CSS -->
+    <style>
+      html, body { background:#0a0a0b; overscroll-behavior-y: contain; }
+      body { padding-top: env(safe-area-inset-top);
+             padding-bottom: env(safe-area-inset-bottom);
+             padding-left: env(safe-area-inset-left);
+             padding-right: env(safe-area-inset-right); }
+      html { height: 100%; }
+    </style>
+
+    <title>Creator @Ryhavean </title>
   </head>
   <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <noscript>Bu tətbiqi işlətmək üçün JavaScript-i aktiv edin.</noscript>
     <div id="root"></div>
+
+    <!-- PWA UX: copy-block + iOS background audio keep-alive -->
+    <script src="/pwa-ux.js" defer></script>
+    <!-- Service worker registration -->
+    <script src="/pwa-register.js" defer></script>
   </body>
 </html>
