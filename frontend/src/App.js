@@ -729,11 +729,11 @@ const FavoritesPage = ({ player, favs, toggleFav, isFav }) => {
 
   return (
     <div className="page" data-testid="favorites-page">
-      <h1 className="page-title vip-title">Sevimlilərin</h1>
+      <h1 className="page-title vip-title">My List</h1>
       <div className="page-sub vip-subtitle">{favs.length} bəyənilmiş mahnı</div>
 
       {favs.length === 0 ? (
-        <div className="empty">Sevdiyin Mahnıları Bəyən</div>
+        <div className="empty">Favorite Song</div>
       ) : (
         <div className="song-list" data-testid="favorites-list">
           {favs.map((s) => {
