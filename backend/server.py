@@ -27,15 +27,43 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("ryhavean")
 
 # ---------- yt-dlp config ----------
+# FIX: Bot blokunu keçmək üçün başlıqlar və klient tənzimləmələri əlavə edildi
 YDL_SEARCH_OPTS = {
-    "quiet": True, "no_warnings": True, "skip_download": True,
-    "extract_flat": True, "default_search": "ytsearch",
-    "noplaylist": True, "socket_timeout": 15,
+    "quiet": True, 
+    "no_warnings": True, 
+    "skip_download": True,
+    "extract_flat": True, 
+    "default_search": "ytsearch",
+    "noplaylist": True, 
+    "socket_timeout": 15,
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-us,en;q=0.5",
+    },
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web"]
+        }
+    }
 }
+
 YDL_STREAM_OPTS = {
-    "quiet": True, "no_warnings": True, "skip_download": True,
+    "quiet": True, 
+    "no_warnings": True, 
+    "skip_download": True,
     "format": "bestaudio[ext=m4a]/bestaudio/best",
-    "noplaylist": True, "socket_timeout": 15,
+    "noplaylist": True, 
+    "socket_timeout": 15,
+    "nocheckcertificate": True,
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    },
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web"]
+        }
+    }
 }
 
 # ---------- TTL cache ----------
@@ -202,10 +230,8 @@ async def recommendations(video_id: str, session_id: Optional[str] = None):
     try:
         query = "azerbaijan top mahnilar 2025"
         if session_id:
-            # İstifadəçinin son dinlədiyi 3 mahnını tapırıq
             recent = await db.recently_played.find({"session_id": session_id}).sort("played_at", -1).to_list(3)
             if recent:
-                # Son dinlənilən sənətçilərə görə axtarış edir
                 artists = [r["artist"] for r in recent if r["artist"] != "Unknown artist"]
                 if artists:
                     query = f"{artists[0]} oxşar mahnılar"
@@ -217,7 +243,7 @@ async def recommendations(video_id: str, session_id: Optional[str] = None):
         return {"results": []}
 
 
-# ---- Favorites (Hər istifadəçiyə 1 like və düzgün sayğac) ----
+# ---- Favorites ----
 @api.get("/favorites")
 async def list_favorites(session_id: str):
     items = await db.favorites.find({"session_id": session_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
@@ -305,18 +331,14 @@ async def featured_categories():
     return {"categories": FEATURED_QUERIES}
 
 
-# FIX: Sayt açılanda istifadəçinin zövqünə uyğun mahnılar gətirir
 @api.get("/home-bootstrap")
 async def home_bootstrap(session_id: Optional[str] = None):
-    # Standart axtarışlar
     query_top = AZ_TOP_QUERIES[0]
     query_discovery = AZ_ARTIST_QUERIES[1]
 
     if session_id:
-        # Tarixçəni yoxla
         recent = await db.recently_played.find({"session_id": session_id}).sort("played_at", -1).to_list(5)
         if len(recent) >= 3:
-            # Əgər 3-dən çox mahnı dinləyibsə, zövqünə uyğun axtarış et
             fav_artist = recent[0]["artist"]
             query_discovery = f"{fav_artist} oxşar hitlər"
 
