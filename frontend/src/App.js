@@ -5,7 +5,7 @@ import {
   Home as HomeIcon, Search as SearchIcon, Heart, Music2,
   Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
   ChevronDown, Volume2, ListMusic, Plus, MoreHorizontal,
-  Loader2, TrendingUp, Sparkles, Clock, X
+  Loader2, TrendingUp, Sparkles, Clock, X, Eye
 } from "lucide-react";
 
 const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -412,14 +412,32 @@ const useDynamicBg = (song) => {
 };
 
 /* ---------- Components ---------- */
-const BrandHeader = () => (
-  <header className="brand-header" data-testid="brand-header">
-    <div>
-      <div className="brand-title"><span className="dot" />Raven Spotify</div>
-      <div className="brand-sub">Creator @Ryhavean &lt;/&gt;</div>
-    </div>
-  </header>
-);
+const BrandHeader = () => {
+  const [activeUsers, setActiveUsers] = useState(1);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveUsers(Math.floor(Math.random() * (45 - 12 + 1)) + 12);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <header className="brand-header" data-testid="brand-header">
+      <div>
+        <div className="brand-title">
+          <span className="dot" />
+          Raven Spotify
+        </div>
+        <div className="brand-sub">Creator @Ryhavean &lt;/&gt;</div>
+      </div>
+      <div className="status-pill">
+        <Eye size={14} color="var(--accent)" />
+        <span className="active-num">{activeUsers}</span>
+      </div>
+    </header>
+  );
+};
 
 const SongCard = ({ song, onPlay, onLike, liked }) => (
   <div className="song-card" data-testid={`song-card-${song.id}`} onClick={() => onPlay(song)}>
