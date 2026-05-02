@@ -27,49 +27,33 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("ryhavean")
 
 # ---------- yt-dlp config ----------
-# FIX: Bot blokunu keçmək üçün başlıqlar və klient tənzimləmələri əlavə edildi
-YDL_SEARCH_OPTS = {
-    "quiet": True, 
-    "no_warnings": True, 
-    "skip_download": True,
-    "extract_flat": True, 
-    "default_search": "ytsearch",
-    "noplaylist": True, 
-    "socket_timeout": 15,
-    "http_headers": {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-us,en;q=0.5",
-    },
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "web"]
-        }
-    }
-}
-
-YDL_STREAM_OPTS = {
-    "quiet": True, 
-    "no_warnings": True, 
-    "skip_download": True,
-    "format": "bestaudio[ext=m4a]/bestaudio/best",
-    "noplaylist": True, 
+# FIX: "Sign in to confirm you’re not a bot" xətasını keçmək üçün təkmilləşdirilmiş konfiqurasiya
+COMMON_YDL_OPTS = {
+    "quiet": True,
+    "no_warnings": True,
     "socket_timeout": 15,
     "nocheckcertificate": True,
     "http_headers": {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
     },
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web"]
+            # Bu hissə vacibdir: Blokdan qaçmaq üçün mobil klientlərdən istifadə edirik
+            "player_client": ["android", "ios", "web"],
+            "player_skip": ["webpage", "configs"],
         }
     }
 }
 
+YDL_SEARCH_OPTS = {**COMMON_YDL_OPTS, "extract_flat": True, "default_search": "ytsearch", "noplaylist": True}
+YDL_STREAM_OPTS = {**COMMON_YDL_OPTS, "format": "bestaudio/best", "noplaylist": True}
+
 # ---------- TTL cache ----------
 _CACHE: dict = {}
-_CACHE_TTL_FEATURED = 60 * 60 * 6   # 6 hours
-_CACHE_TTL_SEARCH   = 60 * 30       # 30 min
+_CACHE_TTL_FEATURED = 60 * 60 * 6
+_CACHE_TTL_SEARCH   = 60 * 30
 
 def cache_get(key: str):
     v = _CACHE.get(key)
@@ -224,7 +208,6 @@ async def stream_info(video_id: str):
             "stream_url": data.get("stream_url")}
 
 
-# FIX: Mahnı bitəndə fərdi tövsiyələr verir (YouTube tərzi)
 @api.get("/recommendations/{video_id}")
 async def recommendations(video_id: str, session_id: Optional[str] = None):
     try:
@@ -243,7 +226,6 @@ async def recommendations(video_id: str, session_id: Optional[str] = None):
         return {"results": []}
 
 
-# ---- Favorites ----
 @api.get("/favorites")
 async def list_favorites(session_id: str):
     items = await db.favorites.find({"session_id": session_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
@@ -280,7 +262,6 @@ async def remove_favorite(song_id: str, session_id: str):
     return {"ok": True, "removed": res.deleted_count}
 
 
-# ---- Recently played ----
 @api.post("/recently-played")
 async def add_recent(body: RecentCreate):
     doc = {"session_id": body.session_id, "song_id": body.song.id,
@@ -299,7 +280,6 @@ async def list_recent(session_id: str, limit: int = 20):
     return {"recent": items}
 
 
-# ---- Trending ----
 @api.get("/trending")
 async def trending(limit: int = 20):
     items = await db.like_counts.find({"likes": {"$gt": 0}}, {"_id": 0}).sort("likes", -1).to_list(limit)
@@ -308,7 +288,6 @@ async def trending(limit: int = 20):
     return {"trending": items}
 
 
-# ---- Featured (Azerbaijani TOP) ----
 AZ_ARTIST_QUERIES = ["Miri Yusif", "Aygün Kazımova", "Çakal rap", "Alizade Azerbaijan", "Lvbel C5"]
 AZ_TOP_QUERIES = ["azerbaijan top mahnilar 2025", "azeri top music 2025", "azerbaycan yeni mahnilar", "azeri hit mahnilar"]
 FEATURED_QUERIES = AZ_TOP_QUERIES + AZ_ARTIST_QUERIES + ["azeri pop 2025", "azeri rap 2025", "azerbaycan rep", "Turkish Azeri hits"]
