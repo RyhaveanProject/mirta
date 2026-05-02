@@ -504,7 +504,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
   return (
     <div className="page" data-testid="home-page">
-     <h1 className="page-title vip-title">Developer Ryhavean {"</>"}</h1>
+     <h1 className="page-title vip-title"></h1>
       <div className="page-sub vip-subtitle">My Channel : @rveanx</div>
 
       {recent.length > 0 && (
@@ -525,7 +525,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title vip-section"><Sparkles size={16} style={{marginRight: 6, display:"inline"}} /> Azərbaycan Top 🇦🇿</div>
+          <div className="section-title vip-section"><Sparkles size={16} style={{marginRight: 6, display:"inline"}} /> Azerbayjan Top Music 🇦🇿</div>
         </div>
         {loading ? (
           <div className="row-scroll">{[...Array(5)].map((_, i) => <Skeleton key={i} w="150px" h="190px" />)}</div>
@@ -583,7 +583,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
             ))}
           </div>
         ) : (
-          <div className="empty">Trend mahnılar istifadəçilər bəyənildikcə görünəcək</div>
+          <div className="empty">Pop Trend Music Playlist</div>
         )}
       </section>
     </div>
