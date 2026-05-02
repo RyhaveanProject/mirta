@@ -185,6 +185,22 @@ const usePlayer = (toast) => {
     return () => { cancelled = true; };
   }, []);
 
+  /* ---------- IOS BACKGROUND SILENCE LOOP ---------- */
+  useEffect(() => {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (!isIOS) return;
+
+    const silentAudio = new Audio("https://raw.githubusercontent.com/anars/blank-audio/master/250-milliseconds-of-silence.mp3");
+    silentAudio.loop = true;
+
+    if (playing) {
+      silentAudio.play().catch(() => {});
+    } else {
+      silentAudio.pause();
+    }
+    return () => silentAudio.pause();
+  }, [playing]);
+
   /* ---------- BACKGROUND PLAYBACK KEEP-ALIVE ---------- */
   useEffect(() => {
     let wakeLock = null;
@@ -204,13 +220,8 @@ const usePlayer = (toast) => {
     const onVisibilityChange = () => {
       const p = ytPlayerRef.current;
       if (!p || !ytReadyRef.current) return;
-      if (document.hidden) {
-        wasPlayingBeforeHiddenRef.current = playingRef.current;
-      } else {
-        if (wasPlayingBeforeHiddenRef.current) {
-          try { p.playVideo(); } catch {}
-        }
-      }
+      // iOS and other browsers aldadılması: 
+      // Visibility dəyişəndə pause əmri göndərilmir, sessiya saxlanılır.
     };
 
     const keepAliveInterval = setInterval(() => {
@@ -218,6 +229,7 @@ const usePlayer = (toast) => {
       if (!p || !ytReadyRef.current) return;
       try {
         const state = p.getPlayerState ? p.getPlayerState() : -1;
+        // Əgər playing state-dəyiksə amma player dayanıbsa (state 2), yenidən başlat (Android üçün vacibdir)
         if (playingRef.current && state === 2) {
           p.playVideo();
         }
@@ -492,7 +504,6 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
   return (
     <div className="page" data-testid="home-page">
-      {/* VIP Başlıq və Alt mətn */}
      <h1 className="page-title vip-title">Developer Ryhavean {"</>"}</h1>
       <div className="page-sub vip-subtitle">My Channel : @rveanx</div>
 
