@@ -477,6 +477,12 @@ const HomePage = ({ player, toggleFav, isFav }) => {
   const [discovery, setDiscovery] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const fetchTrending = useCallback(() => {
+    axios.get(`${API}/trending?limit=10`)
+      .then(r => setTrending(r.data.trending || []))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const sid = player.sessionId;
@@ -492,12 +498,17 @@ const HomePage = ({ player, toggleFav, isFav }) => {
     axios.get(`${API}/recently-played?session_id=${sid}&limit=12`)
       .then(r => !cancelled && setRecent((r.data.recent || []).map(x => ({...x, id: x.song_id}))))
       .catch(() => {});
-    axios.get(`${API}/trending?limit=10`)
-      .then(r => !cancelled && setTrending(r.data.trending || []))
-      .catch(() => {});
+    
+    fetchTrending();
 
-    return () => { cancelled = true; };
-  }, [player.sessionId]);
+    // Dinləyici əlavə edirik: bəyənmə dəyişəndə trendləri yenilə
+    window.addEventListener("fav_updated", fetchTrending);
+
+    return () => { 
+      cancelled = true; 
+      window.removeEventListener("fav_updated", fetchTrending);
+    };
+  }, [player.sessionId, fetchTrending]);
 
   return (
     <div className="page" data-testid="home-page">
@@ -677,7 +688,7 @@ const SearchPage = ({ player, toggleFav, isFav }) => {
               </div>
             </div>
           )}
-          {!activeCat && <div className="empty">Yuxarıdan janr seç və ya yazıb axtar</div>}
+          {!activeCat && <div className="empty">Yuxarıdan janr seç və ya mahnı adını yazıb axtar</div>}
         </>
       )}
 
@@ -703,9 +714,18 @@ const SearchPage = ({ player, toggleFav, isFav }) => {
 
 const FavoritesPage = ({ player, favs, toggleFav, isFav }) => {
   const [trending, setTrending] = useState([]);
-  useEffect(() => {
-    axios.get(`${API}/trending?limit=10`).then(r => setTrending(r.data.trending || [])).catch(() => {});
+  
+  const fetchTrending = useCallback(() => {
+    axios.get(`${API}/trending?limit=10`)
+      .then(r => setTrending(r.data.trending || []))
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    fetchTrending();
+    window.addEventListener("fav_updated", fetchTrending);
+    return () => window.removeEventListener("fav_updated", fetchTrending);
+  }, [fetchTrending]);
 
   return (
     <div className="page" data-testid="favorites-page">
@@ -713,7 +733,7 @@ const FavoritesPage = ({ player, favs, toggleFav, isFav }) => {
       <div className="page-sub vip-subtitle">{favs.length} bəyənilmiş mahnı</div>
 
       {favs.length === 0 ? (
-        <div className="empty">İstənilən mahnının ürəyinə tıkla və burada saxlansın</div>
+        <div className="empty">Sevdiyin Mahnıları Bəyən</div>
       ) : (
         <div className="song-list" data-testid="favorites-list">
           {favs.map((s) => {
@@ -729,7 +749,7 @@ const FavoritesPage = ({ player, favs, toggleFav, isFav }) => {
           <div className="section-title vip-section"><TrendingUp size={16} style={{marginRight:6, display:"inline"}} /> Ən çox bəyənilənlər</div>
         </div>
         {trending.length === 0 ? (
-          <div className="empty">Hələ bəyəni yoxdur. İlk sən ol!</div>
+          <div className="empty">Hələ bəyənilmiş mahnı yoxdur</div>
         ) : (
           <div className="song-list">
             {trending.map((s, i) => (
@@ -756,7 +776,7 @@ const FullPlayer = ({ player, toggleFav, isFav }) => {
         <button className="ctrl" onClick={() => player.setFullOpen(false)} data-testid="full-close">
           <ChevronDown size={22} />
         </button>
-        <div className="label">İndi Oynayır</div>
+        <div className="label">Oxunur</div>
         <button className="ctrl"><MoreHorizontal size={20} /></button>
       </div>
 
@@ -868,10 +888,10 @@ const MiniPlayer = ({ player, toggleFav, isFav }) => {
 
 const BottomNav = ({ tab, setTab }) => {
   const items = [
-    { id: "home", label: "Ana", Icon: HomeIcon },
-    { id: "search", label: "Axtar", Icon: SearchIcon },
-    { id: "favs", label: "Sevimlilər", Icon: Heart },
-    { id: "nowp", label: "Oynayır", Icon: Music2 },
+    { id: "home", label: "Home", Icon: HomeIcon },
+    { id: "search", label: "Serach", Icon: SearchIcon },
+    { id: "favs", label: "My List", Icon: Heart },
+    { id: "nowp", label: "Player", Icon: Music2 },
   ];
   return (
     <nav className="bottom-nav" data-testid="bottom-nav">
@@ -931,14 +951,16 @@ function App() {
           song: { id: s.id, title: s.title || "", artist: s.artist || "",
                   duration: s.duration || 0, thumbnail: s.thumbnail || "" },
         });
-        toast.show("Sevimlilərə əlavə edildi ♥");
+        toast.show("❤️‍🔥");
       }
     } catch {
       toast.show("Əməliyyat alınmadı, yenidən cəhd edin");
       refreshFavs();
     } finally {
       setLikePending((p) => { const { [s.id]: _, ...rest } = p; return rest; });
-      refreshFavs(); // Xətanın düzəldildiyi əsas hissə: Məlumatları bazadan təkrar çəkir
+      refreshFavs();
+      // Trend siyahılarını yeniləmək üçün siqnal göndəririk
+      window.dispatchEvent(new Event("fav_updated"));
     }
   }, [favs, likePending, player.sessionId, refreshFavs, toast]);
 
