@@ -246,11 +246,11 @@
   object-fit: cover;
   background: #1a1b20;
 }
-.row-ranked .cover { width: 48px; height: 48px; ... }
+.row-ranked .cover { width: 48px; height: 48px; }
 .row-ranked .meta { overflow: hidden; min-width: 0; }
-.row-ranked .title { font-size: 14px; ... text-overflow: ellipsis; }
-.row-ranked .artist { font-size: 12px; ... }
-.row-ranked .duration { font-size: 12px; ... }
+.row-ranked .title { font-size: 14px;  text-overflow: ellipsis; }
+.row-ranked .artist { font-size: 12px; }
+.row-ranked .duration { font-size: 12px; }
 
 /* Row like button */
 .row-like-btn {
