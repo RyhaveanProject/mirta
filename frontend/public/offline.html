@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0a0a0b" />
+  <title>Ryhavean - Offline</title>
+  <style>
+    * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
+    html, body { margin:0; height:100%; background:#0a0a0b; color:#f4f4f5;
+      font-family: "Sora","Outfit",system-ui,-apple-system,"Segoe UI",sans-serif; }
+    .wrap { min-height:100%; display:flex; flex-direction:column; align-items:center;
+      justify-content:center; text-align:center; padding:24px; gap:18px;
+      background:
+        radial-gradient(900px 500px at 10% -10%, rgba(30,215,96,0.08), transparent 60%),
+        radial-gradient(700px 400px at 90% 110%, rgba(100,100,255,0.07), transparent 60%),
+        #0a0a0b; }
+    .logo { width:96px; height:96px; border-radius:24px; background:#1d1e24;
+      border:1px solid rgba(255,255,255,0.07); display:flex; align-items:center;
+      justify-content:center; font-weight:800; font-size:32px; color:#1ed760; }
+    h1 { font-size:22px; margin:0; font-weight:700; }
+    p  { color:#a1a1aa; margin:0; max-width: 340px; line-height:1.5; }
+    button { margin-top:8px; background:#1ed760; color:#000; border:none;
+      padding:12px 22px; border-radius:999px; font-weight:700; font-size:15px; cursor:pointer; }
+    button:active { transform: scale(0.98); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo">R</div>
+    <h1>No internet connection</h1>
+    <p>You are currently offline. It will automatically refresh once the connection is restored.</p>
+    <button onclick="location.reload()">Try Again</button>
+  </div>
+</body>
+</html>
