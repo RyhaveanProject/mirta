@@ -1,19 +1,17 @@
-// src/firebase.js
 import { initializeApp } from "firebase/app";
 import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
-  apiKey: "SƏNİN_API_KEY",
-  authDomain: "layihe-adi.firebaseapp.com",
-  databaseURL: "https://layihe-adi-default-rtdb.firebaseio.com", // BU VACİBDİR
-  projectId: "layihe-adi",
-  storageBucket: "layihe-adi.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:12345:web:abcdef"
+  apiKey: "AIzaSyBpHCFFXChXiFHm_zQrx5dIwwrGDeF73Ag",
+  authDomain: "ryhavean.firebaseapp.com",
+  projectId: "ryhavean",
+  storageBucket: "ryhavean.firebasestorage.app",
+  messagingSenderId: "1090136784407",
+  appId: "1:1090136784407:web:c7120e092be2d3d43be652",
+  measurementId: "G-SN5QQCM7ZF",
+  // Yeni regionlu linkini bura əlavə etdik:
+  databaseURL: "https://ryhavean-default-rtdb.europe-west1.firebasedatabase.app/" 
 };
 
-// Firebase-i başladırıq
 const app = initializeApp(firebaseConfig);
-
-// Realtime Database-i ixrac edirik ki, App.js-də istifadə edək
 export const db = getDatabase(app);
