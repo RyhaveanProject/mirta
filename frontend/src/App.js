@@ -8,6 +8,10 @@ import {
   Loader2, TrendingUp, Sparkles, Clock, X, Eye
 } from "lucide-react";
 
+// --- FIREBASE IMPORTLARI ---
+import { ref, onValue, push, onDisconnect, set } from "firebase/database";
+import { db } from "./firebase";
+
 const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
 const API = `${BACKEND_URL}/api`;
 
@@ -411,17 +415,34 @@ const useDynamicBg = (song) => {
   }, [song?.thumbnail]);
 };
 
-/* ---------- Components ---------- */
-const BrandHeader = () => {
-  const [activeUsers, setActiveUsers] = useState(1);
+/* ---------- ACTIVE USER TRACKER (YENİ) ---------- */
+const ActiveUserTracker = () => {
+  const [count, setCount] = useState(1);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setActiveUsers(Math.floor(Math.random() * (45 - 12 + 1)) + 12);
-    }, 10000);
-    return () => clearInterval(interval);
+    const connectionsRef = ref(db, 'status/connections');
+    const connectedRef = ref(db, '.info/connected');
+    const userStatusRef = push(connectionsRef);
+
+    onValue(connectedRef, (snap) => {
+      if (snap.val() === true) {
+        set(userStatusRef, true);
+        onDisconnect(userStatusRef).remove();
+      }
+    });
+
+    const unsub = onValue(connectionsRef, (snap) => {
+      setCount(snap.size || 1);
+    });
+
+    return () => unsub();
   }, []);
 
+  return <span className="active-num">{count}</span>;
+};
+
+/* ---------- Components ---------- */
+const BrandHeader = () => {
   return (
     <header className="brand-header" data-testid="brand-header">
       <div>
@@ -433,7 +454,7 @@ const BrandHeader = () => {
       </div>
       <div className="status-pill">
         <Eye size={14} color="var(--accent)" />
-        <span className="active-num">{activeUsers}</span>
+        <ActiveUserTracker />
       </div>
     </header>
   );
