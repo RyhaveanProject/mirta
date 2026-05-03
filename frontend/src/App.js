@@ -178,8 +178,12 @@ const usePlayer = (toast) => {
     };
     const onError = () => {
       setLoadingStream(false);
-      toast.show("Stream alınmadı, növbətiyə keçilir…");
-      if (nextFnRef.current) nextFnRef.current();
+      // Auto-skip silindi – ilk yükləmədə yt-dlp 3-10 san. çəkə bilər,
+      // dərhal next() çağırmaq sonsuz skip loop-u yaradırdı.
+      // İstifadəçi özü retry edə və ya next düyməsini basa bilər.
+      const a = audioRef.current;
+      const code = a && a.error ? a.error.code : "?";
+      toast.show(`Stream alınmadı (${code}). Yenidən cəhd edin.`);
     };
 
     a.addEventListener("play", onPlay);
