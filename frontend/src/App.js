@@ -75,21 +75,7 @@ const useToast = () => {
   return { show, node };
 };
 
-/* ---------- YouTube IFrame Player loader ---------- */
-let ytApiPromise = null;
-const loadYTApi = () => {
-  if (ytApiPromise) return ytApiPromise;
-  ytApiPromise = new Promise((resolve) => {
-    if (window.YT && window.YT.Player) return resolve(window.YT);
-    const s = document.createElement("script");
-    s.src = "https://www.youtube.com/iframe_api";
-    document.body.appendChild(s);
-    window.onYouTubeIframeAPIReady = () => resolve(window.YT);
-  });
-  return ytApiPromise;
-};
-
-/* ---------- MediaSession + background keep-alive ---------- */
+/* ---------- MediaSession (iOS lock-screen + background controls) ---------- */
 const updateMediaSession = (song, player) => {
   if (!("mediaSession" in navigator) || !song) return;
   try {
@@ -98,19 +84,27 @@ const updateMediaSession = (song, player) => {
       artist: song.artist || "",
       album: "Ryhavean Spotify",
       artwork: song.thumbnail ? [
-        { src: song.thumbnail, sizes: "96x96", type: "image/jpeg" },
+        { src: song.thumbnail, sizes: "96x96",  type: "image/jpeg" },
         { src: song.thumbnail, sizes: "192x192", type: "image/jpeg" },
         { src: song.thumbnail, sizes: "512x512", type: "image/jpeg" },
       ] : [],
     });
-    navigator.mediaSession.setActionHandler("play", () => player.togglePlay());
-    navigator.mediaSession.setActionHandler("pause", () => player.togglePlay());
-    navigator.mediaSession.setActionHandler("previoustrack", () => player.prev());
-    navigator.mediaSession.setActionHandler("nexttrack", () => player.next());
+    navigator.mediaSession.setActionHandler("play",         () => player.resume());
+    navigator.mediaSession.setActionHandler("pause",        () => player.pause());
+    navigator.mediaSession.setActionHandler("previoustrack",() => player.prev());
+    navigator.mediaSession.setActionHandler("nexttrack",    () => player.next());
+    navigator.mediaSession.setActionHandler("seekto", (d) => {
+      if (d.fastSeek && player.audio && "fastSeek" in player.audio) {
+        try { player.audio.fastSeek(d.seekTime); return; } catch {}
+      }
+      if (player.audio && typeof d.seekTime === "number") {
+        try { player.audio.currentTime = d.seekTime; } catch {}
+      }
+    });
   } catch {}
 };
 
-/* ---------- Player Hook ---------- */
+/* ---------- Player Hook (HTML5 <audio> – iOS PWA background-safe) ---------- */
 const usePlayer = (toast) => {
   const [current, setCurrent] = useState(null);
   const [queue, setQueue] = useState([]);
@@ -123,182 +117,129 @@ const usePlayer = (toast) => {
   const [repeat, setRepeat] = useState("off");
   const [fullOpen, setFullOpen] = useState(false);
   const [loadingStream, setLoadingStream] = useState(false);
-  const ytPlayerRef = useRef(null);
-  const ytReadyRef = useRef(false);
-  const ytDivId = "yt-player-host";
-  const progressTimerRef = useRef(null);
+
+  // Tək, qlobal HTML5 audio elementi – iOS PWA-da background-da işləyir.
+  const audioRef = useRef(null);
+  if (!audioRef.current && typeof window !== "undefined") {
+    let a = document.getElementById("ryhavean-audio");
+    if (!a) {
+      a = document.createElement("audio");
+      a.id = "ryhavean-audio";
+      a.preload = "auto";
+      a.setAttribute("playsinline", "");
+      a.setAttribute("webkit-playsinline", "");
+      a.setAttribute("x-webkit-airplay", "allow");
+      a.crossOrigin = "anonymous";
+      a.style.display = "none";
+      document.body.appendChild(a);
+    }
+    audioRef.current = a;
+  }
+
   const sessionId = getSessionId();
   const nextFnRef = useRef(null);
-  const togglePlayRef = useRef(null);
   const prevFnRef = useRef(null);
-  const playingRef = useRef(false);
-  const wasPlayingBeforeHiddenRef = useRef(false);
+  const resumeFnRef = useRef(null);
+  const pauseFnRef = useRef(null);
   const repeatRef = useRef(repeat);
+  const currentIdRef = useRef(null);
   useEffect(() => { repeatRef.current = repeat; }, [repeat]);
-  useEffect(() => { playingRef.current = playing; }, [playing]);
 
+  // Audio elementinə ümumi event-lər
   useEffect(() => {
-    let cancelled = false;
-    let host = document.getElementById(ytDivId);
-    if (!host) {
-      host = document.createElement("div");
-      host.id = ytDivId;
-      host.setAttribute("aria-hidden", "true");
-      host.style.cssText = "position:fixed;bottom:0;right:0;width:200px;height:200px;opacity:0.01;pointer-events:none;z-index:-1;";
-      document.body.appendChild(host);
-    }
-    loadYTApi().then((YT) => {
-      if (cancelled) return;
-      ytPlayerRef.current = new YT.Player(ytDivId, {
-        height: "200", width: "200",
-        playerVars: {
-          autoplay: 1, controls: 0, playsinline: 1,
-          modestbranding: 1, rel: 0, origin: window.location.origin,
-          enablejsapi: 1, widget_referrer: window.location.origin
-        },
-        events: {
-          onReady: () => {
-            ytReadyRef.current = true;
-            try {
-              ytPlayerRef.current.setVolume(90);
-              ytPlayerRef.current.mute();
-            } catch {}
-          },
-          onStateChange: (e) => {
-            if (e.data === 1) { setPlaying(true); setLoadingStream(false); }
-            else if (e.data === 2) {
-              setPlaying(false);
-            }
-            else if (e.data === 3) { setLoadingStream(true); }
-            else if (e.data === 0) {
-              if (repeatRef.current === "one") {
-                try { ytPlayerRef.current.seekTo(0, true); ytPlayerRef.current.playVideo(); } catch {}
-              } else if (nextFnRef.current) {
-                nextFnRef.current();
-              }
-            }
-          },
-          onError: () => {
-            toast.show("Video unavailable. Trying another…");
-            setLoadingStream(false);
-            if (nextFnRef.current) nextFnRef.current();
-          },
-        },
-      });
-    });
-    return () => { cancelled = true; };
-  }, []);
+    const a = audioRef.current;
+    if (!a) return;
 
-  /* ---------- IOS BACKGROUND SILENCE LOOP ---------- */
-  useEffect(() => {
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-    if (!isIOS) return;
-
-    const silentAudio = new Audio("https://raw.githubusercontent.com/anars/blank-audio/master/250-milliseconds-of-silence.mp3");
-    silentAudio.loop = true;
-
-    if (playing) {
-      silentAudio.play().catch(() => {});
-    } else {
-      silentAudio.pause();
-    }
-    return () => silentAudio.pause();
-  }, [playing]);
-
-  /* ---------- BACKGROUND PLAYBACK KEEP-ALIVE ---------- */
-  useEffect(() => {
-    let wakeLock = null;
-
-    const requestWakeLock = async () => {
-      try {
-        if ("wakeLock" in navigator) {
-          wakeLock = await navigator.wakeLock.request("screen");
-        }
-      } catch {}
+    const onPlay     = () => { setPlaying(true);  setLoadingStream(false); };
+    const onPause    = () => { setPlaying(false); };
+    const onWaiting  = () => setLoadingStream(true);
+    const onPlaying  = () => setLoadingStream(false);
+    const onCanPlay  = () => setLoadingStream(false);
+    const onLoaded   = () => {
+      if (!isNaN(a.duration) && a.duration) setDuration(a.duration);
+    };
+    const onTime     = () => {
+      if (!isNaN(a.currentTime)) setProgress(a.currentTime);
+      if ("mediaSession" in navigator && navigator.mediaSession.setPositionState) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: isFinite(a.duration) ? a.duration : 0,
+            playbackRate: a.playbackRate || 1,
+            position: a.currentTime || 0,
+          });
+        } catch {}
+      }
+    };
+    const onEnded = () => {
+      if (repeatRef.current === "one") {
+        try { a.currentTime = 0; a.play().catch(() => {}); } catch {}
+      } else if (nextFnRef.current) {
+        nextFnRef.current();
+      }
+    };
+    const onError = () => {
+      setLoadingStream(false);
+      toast.show("Stream alınmadı, növbətiyə keçilir…");
+      if (nextFnRef.current) nextFnRef.current();
     };
 
-    const releaseWakeLock = async () => {
-      try { if (wakeLock) { await wakeLock.release(); wakeLock = null; } } catch {}
-    };
-
-    const onVisibilityChange = () => {
-      const p = ytPlayerRef.current;
-      if (!p || !ytReadyRef.current) return;
-    };
-
-    const keepAliveInterval = setInterval(() => {
-      const p = ytPlayerRef.current;
-      if (!p || !ytReadyRef.current) return;
-      try {
-        const state = p.getPlayerState ? p.getPlayerState() : -1;
-        if (playingRef.current && state === 2) {
-          p.playVideo();
-        }
-      } catch {}
-    }, 1500);
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    requestWakeLock();
-
-    const onVisRelease = () => {
-      if (document.visibilityState === "visible") requestWakeLock();
-    };
-    document.addEventListener("visibilitychange", onVisRelease);
+    a.addEventListener("play", onPlay);
+    a.addEventListener("pause", onPause);
+    a.addEventListener("waiting", onWaiting);
+    a.addEventListener("playing", onPlaying);
+    a.addEventListener("canplay", onCanPlay);
+    a.addEventListener("loadedmetadata", onLoaded);
+    a.addEventListener("durationchange", onLoaded);
+    a.addEventListener("timeupdate", onTime);
+    a.addEventListener("ended", onEnded);
+    a.addEventListener("error", onError);
 
     return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      document.removeEventListener("visibilitychange", onVisRelease);
-      clearInterval(keepAliveInterval);
-      releaseWakeLock();
+      a.removeEventListener("play", onPlay);
+      a.removeEventListener("pause", onPause);
+      a.removeEventListener("waiting", onWaiting);
+      a.removeEventListener("playing", onPlaying);
+      a.removeEventListener("canplay", onCanPlay);
+      a.removeEventListener("loadedmetadata", onLoaded);
+      a.removeEventListener("durationchange", onLoaded);
+      a.removeEventListener("timeupdate", onTime);
+      a.removeEventListener("ended", onEnded);
+      a.removeEventListener("error", onError);
     };
-  }, []);
+  }, [toast]);
 
+  // Volume sync
   useEffect(() => {
-    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-    progressTimerRef.current = setInterval(() => {
-      const p = ytPlayerRef.current;
-      if (!p || !ytReadyRef.current) return;
-      try {
-        const cur = p.getCurrentTime ? p.getCurrentTime() : 0;
-        const dur = p.getDuration ? p.getDuration() : 0;
-        if (!isNaN(cur)) setProgress(cur);
-        if (!isNaN(dur) && dur) setDuration(dur);
-      } catch {}
-    }, 500);
-    return () => clearInterval(progressTimerRef.current);
-  }, []);
-
-  useEffect(() => {
-    const p = ytPlayerRef.current;
-    if (p && ytReadyRef.current) {
-      try { p.setVolume(Math.round(volume * 100)); } catch {}
-    }
+    const a = audioRef.current;
+    if (a) try { a.volume = Math.max(0, Math.min(1, volume)); } catch {}
   }, [volume]);
 
   const play = useCallback(async (song, opts = {}) => {
     if (!song || !song.id) return;
+    const a = audioRef.current;
+    if (!a) return;
     setLoadingStream(true);
     const prevSong = current;
     setCurrent(song);
-    setPlaying(true);
+    currentIdRef.current = song.id;
     setProgress(0);
     setDuration(song.duration || 0);
 
-    for (let i = 0; i < 20 && !ytReadyRef.current; i++) {
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    const streamUrl = `${API}/audio/${encodeURIComponent(song.id)}`;
     try {
-      const p = ytPlayerRef.current;
-      p.loadVideoById({ videoId: song.id, startSeconds: 0, suggestedQuality: "small" });
-      setTimeout(() => {
-        try {
-          p.playVideo();
-          setTimeout(() => { try { p.unMute(); p.setVolume(Math.round(volume * 100)); } catch {} }, 600);
-        } catch {}
-      }, 300);
+      a.src = streamUrl;
+      a.load();
+      // İlk play() istifadəçi jestindən gəlir – iOS bunu icazə verir.
+      const p = a.play();
+      if (p && typeof p.catch === "function") {
+        p.catch(() => {
+          setLoadingStream(false);
+          toast.show("Oxutmaq alınmadı. Yenidən cəhd edin.");
+        });
+      }
     } catch {
-      toast.show("Couldn't start playback.");
       setLoadingStream(false);
+      toast.show("Oxutmaq alınmadı.");
     }
 
     axios.get(`${API}/stream-info/${song.id}`).then(({ data }) => {
@@ -316,17 +257,25 @@ const usePlayer = (toast) => {
     if (!opts.skipHistory && prevSong) {
       setHistory((h) => [prevSong, ...h].slice(0, 50));
     }
-  }, [current, sessionId, toast, volume]);
+  }, [current, sessionId, toast]);
+
+  const resume = useCallback(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const p = a.play();
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  }, []);
+
+  const pause = useCallback(() => {
+    const a = audioRef.current;
+    if (a) { try { a.pause(); } catch {} }
+  }, []);
 
   const togglePlay = useCallback(() => {
-    const p = ytPlayerRef.current;
-    if (!p || !current) return;
-    try {
-      const state = p.getPlayerState ? p.getPlayerState() : -1;
-      if (state === 1) { p.pauseVideo(); setPlaying(false); wasPlayingBeforeHiddenRef.current = false; }
-      else { p.playVideo(); setPlaying(true); wasPlayingBeforeHiddenRef.current = true; }
-    } catch {}
-  }, [current]);
+    const a = audioRef.current;
+    if (!a || !current) return;
+    if (a.paused) resume(); else pause();
+  }, [current, resume, pause]);
 
   const next = useCallback(async () => {
     let nextSong = null;
@@ -352,9 +301,6 @@ const usePlayer = (toast) => {
     if (nextSong) play(nextSong);
   }, [queue, shuffle, current, play]);
 
-  useEffect(() => { nextFnRef.current = next; }, [next]);
-  useEffect(() => { togglePlayRef.current = togglePlay; }, [togglePlay]);
-
   const prev = useCallback(() => {
     if (history.length) {
       const h = [...history];
@@ -362,19 +308,25 @@ const usePlayer = (toast) => {
       setHistory(h);
       if (p) play(p, { skipHistory: true });
     } else {
-      const pl = ytPlayerRef.current;
-      try { if (pl) pl.seekTo(0, true); } catch {}
+      const a = audioRef.current;
+      try { if (a) a.currentTime = 0; } catch {}
     }
   }, [history, play]);
 
+  useEffect(() => { nextFnRef.current = next; }, [next]);
   useEffect(() => { prevFnRef.current = prev; }, [prev]);
+  useEffect(() => { resumeFnRef.current = resume; }, [resume]);
+  useEffect(() => { pauseFnRef.current = pause; }, [pause]);
 
+  // MediaSession – lock screen / control center / Bluetooth / AirPods
   useEffect(() => {
     if (!current) return;
     updateMediaSession(current, {
-      togglePlay: () => togglePlayRef.current && togglePlayRef.current(),
-      next: () => nextFnRef.current && nextFnRef.current(),
-      prev: () => prevFnRef.current && prevFnRef.current(),
+      audio: audioRef.current,
+      resume: () => resumeFnRef.current && resumeFnRef.current(),
+      pause:  () => pauseFnRef.current  && pauseFnRef.current(),
+      next:   () => nextFnRef.current   && nextFnRef.current(),
+      prev:   () => prevFnRef.current   && prevFnRef.current(),
     });
     if ("mediaSession" in navigator) {
       try { navigator.mediaSession.playbackState = playing ? "playing" : "paused"; } catch {}
@@ -382,22 +334,23 @@ const usePlayer = (toast) => {
   }, [current, playing]);
 
   const seek = (ratio) => {
-    const p = ytPlayerRef.current;
-    try {
-      const dur = p.getDuration ? p.getDuration() : duration;
-      if (p && dur) p.seekTo(dur * ratio, true);
-    } catch {}
+    const a = audioRef.current;
+    if (!a) return;
+    const dur = isFinite(a.duration) ? a.duration : duration;
+    if (dur) {
+      try { a.currentTime = Math.max(0, Math.min(dur, dur * ratio)); } catch {}
+    }
   };
 
   const enqueue = (song) => {
     setQueue((q) => [...q, song]);
-    toast.show(`Added to queue: ${song.title.slice(0, 30)}`);
+    toast.show(`Növbəyə əlavə olundu: ${song.title.slice(0, 30)}`);
   };
 
   return {
     current, queue, playing, progress, duration, volume, shuffle, repeat,
-    fullOpen, loadingStream, sessionId, ytDivId,
-    play, togglePlay, next, prev, seek, enqueue,
+    fullOpen, loadingStream, sessionId,
+    play, togglePlay, resume, pause, next, prev, seek, enqueue,
     setShuffle, setRepeat, setVolume, setFullOpen, setQueue,
   };
 };
