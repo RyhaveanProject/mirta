@@ -129,13 +129,12 @@ const usePlayer = (toast) => {
       a.setAttribute("playsinline", "");
       a.setAttribute("webkit-playsinline", "");
       a.setAttribute("x-webkit-airplay", "allow");
-      a.crossOrigin = "anonymous";
+      // crossOrigin SİLİNDİ – CORS preflight audio stream-i bloklayırdı
       a.style.display = "none";
       document.body.appendChild(a);
     }
     audioRef.current = a;
   }
-
   const sessionId = getSessionId();
   const nextFnRef = useRef(null);
   const prevFnRef = useRef(null);
