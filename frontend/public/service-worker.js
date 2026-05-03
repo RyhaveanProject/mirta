@@ -1,5 +1,5 @@
 /* Ryhavean PWA Service Worker */
-const CACHE_VERSION = "ryhavean-v1.0.2";
+const CACHE_VERSION = "ryhavean-v1.1.0";
 const APP_SHELL = `${CACHE_VERSION}-shell`;
 const RUNTIME   = `${CACHE_VERSION}-runtime`;
 const IMAGES    = `${CACHE_VERSION}-images`;
@@ -35,7 +35,17 @@ const isYouTube = (url) =>
 const isAPI = (url) => {
   try {
     const u = new URL(url);
+    // Audio stream-lərini service worker-dən tamamilə keçir – iOS background-da Range request-lər
+    // və böyük axın service worker üzərindən keçməməlidir.
+    if (/\/api\/audio\//.test(u.pathname)) return false;
     return u.pathname.startsWith("/api") || /onrender\.com/.test(u.hostname) || /ryhavean-spotify-backend/.test(u.hostname);
+  } catch { return false; }
+};
+
+const isAudioStream = (url) => {
+  try {
+    const u = new URL(url);
+    return /\/api\/audio\//.test(u.pathname);
   } catch { return false; }
 };
 
@@ -57,6 +67,7 @@ self.addEventListener("fetch", (event) => {
   const url = req.url;
 
   if (isYouTube(url)) return;
+  if (isAudioStream(url)) return; // audio proxy stream-i SW-dan tam keçir
   if (url.startsWith("chrome-extension://")) return;
   if (req.headers.has("range")) return;
 
