@@ -1,5 +1,5 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -8,7 +8,6 @@ import re
 import time
 import logging
 import asyncio
-import httpx
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Optional, List
@@ -30,38 +29,15 @@ api = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("ryhavean")
 
-# ---------- yt-dlp cookie / proxy / UA config ----------
-YT_COOKIES_PATH = os.environ.get("YT_COOKIES_PATH")  # local file path inside container (optional)
-YT_COOKIES_B64 = os.environ.get("YT_COOKIES_B64")    # base64-encoded Netscape cookies.txt (optional)
-YT_PROXY = os.environ.get("YT_PROXY")                # e.g. http://user:pass@host:port (optional)
+# ---------- yt-dlp config (cookies-free) ----------
 YT_UA = os.environ.get(
     "YT_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 )
 
-# If cookies provided as base64, decode them to a file once at startup
-_COOKIE_FILE_PATH: Optional[str] = None
-def _prepare_cookie_file():
-    global _COOKIE_FILE_PATH
-    if YT_COOKIES_PATH and os.path.exists(YT_COOKIES_PATH):
-        _COOKIE_FILE_PATH = YT_COOKIES_PATH
-        return
-    if YT_COOKIES_B64:
-        try:
-            import base64
-            target = "/tmp/yt_cookies.txt"
-            data = base64.b64decode(YT_COOKIES_B64)
-            with open(target, "wb") as f:
-                f.write(data)
-            _COOKIE_FILE_PATH = target
-        except Exception:
-            logger.exception("Failed decoding YT_COOKIES_B64")
 
-_prepare_cookie_file()
-
-
-def _base_ydl_opts(client: Optional[str] = None) -> dict:
+def _base_ydl_opts(player_client: Optional[str] = None) -> dict:
     opts = {
         "quiet": True,
         "no_warnings": True,
@@ -70,26 +46,24 @@ def _base_ydl_opts(client: Optional[str] = None) -> dict:
         "socket_timeout": 20,
         "http_headers": {"User-Agent": YT_UA},
     }
-    if client:
-        opts["extractor_args"] = {"youtube": {"player_client": [client]}}
-    if _COOKIE_FILE_PATH:
-        opts["cookiefile"] = _COOKIE_FILE_PATH
-    if YT_PROXY:
-        opts["proxy"] = YT_PROXY
+    if player_client:
+        opts["extractor_args"] = {"youtube": {"player_client": [player_client]}}
     return opts
 
 
-# For search, the "web" client works best and is light-weight
+# Search is light-weight – web client works best
 YDL_SEARCH_OPTS = {**_base_ydl_opts("web"), "extract_flat": True, "default_search": "ytsearch"}
 
-# For stream extraction we fall back across multiple clients until we get a URL
-STREAM_CLIENTS = ["web", "mweb", "ios", "tv_embedded", "android"] if _COOKIE_FILE_PATH else ["ios", "mweb", "tv_embedded", "android", "web"]
+# Cookies-free stream extraction: these clients historically expose audio
+# formats on googlevideo CDN without requiring login. Order matters.
+STREAM_CLIENTS = ["ios", "android_music", "android", "mweb", "tv_embedded", "web"]
 
 # ---------- TTL cache ----------
 _CACHE: dict = {}
-_CACHE_TTL_FEATURED = 60 * 60 * 6   # 6 hours
+_CACHE_TTL_FEATURED = 60 * 60 * 6   # 6h
 _CACHE_TTL_SEARCH = 60 * 30         # 30 min
-_CACHE_TTL_STREAM = 60 * 60 * 3     # 3h
+# Googlevideo direct URLs expire (usually ~6h), keep a little shorter to be safe
+_CACHE_TTL_STREAM = 60 * 60 * 2     # 2h
 
 
 def cache_get(key: str):
@@ -107,7 +81,7 @@ def cache_set(key: str, data, ttl: int):
     _CACHE[key] = (time.time() + ttl, data)
 
 
-# ---------- yt-dlp helpers ----------
+# ---------- helpers ----------
 def _pick_thumb(thumbs: List[dict], vid: str) -> str:
     if thumbs:
         for t in reversed(thumbs):
@@ -140,28 +114,59 @@ def _search_sync(query: str, limit: int = 20):
     return results
 
 
-def _stream_sync(video_id: str):
+def _extract_googlevideo_url(info: dict) -> Optional[str]:
+    """Pick the best audio-only format that is hosted on googlevideo CDN."""
+    if not info:
+        return None
+
+    formats = info.get("formats") or []
+    audio_only = []
+    for f in formats:
+        url = f.get("url") or ""
+        if not url or "googlevideo" not in url:
+            continue
+        acodec = f.get("acodec")
+        vcodec = f.get("vcodec")
+        if acodec and acodec != "none" and (not vcodec or vcodec == "none"):
+            audio_only.append(f)
+
+    def _rank(f):
+        ext = f.get("ext") or ""
+        abr = f.get("abr") or f.get("tbr") or 0
+        ext_score = 2 if ext == "m4a" else (1 if ext in ("mp4", "mp3") else 0)
+        return (ext_score, abr)
+
+    audio_only.sort(key=_rank, reverse=True)
+    if audio_only:
+        return audio_only[0].get("url")
+
+    for f in formats:
+        url = f.get("url") or ""
+        if url and "googlevideo" in url and f.get("acodec") and f.get("acodec") != "none":
+            return url
+
+    top = info.get("url") or ""
+    if "googlevideo" in top:
+        return top
+    return None
+
+
+def _stream_sync(video_id: str) -> Optional[dict]:
     url = f"https://www.youtube.com/watch?v={video_id}"
     last_err = None
-    for client in STREAM_CLIENTS:
-        opts = {**_base_ydl_opts(client), "format": "bestaudio[ext=m4a]/bestaudio/best"}
+    for player_client in STREAM_CLIENTS:
+        opts = {**_base_ydl_opts(player_client), "format": "bestaudio[ext=m4a]/bestaudio/best"}
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             if not info:
                 continue
-            audio_url = info.get("url")
-            if not audio_url:
-                formats = info.get("formats") or []
-                af = [f for f in formats if f.get("acodec") and f.get("acodec") != "none" and f.get("url")]
-                if af:
-                    af.sort(key=lambda f: f.get("abr") or 0, reverse=True)
-                    audio_url = af[0].get("url")
+            audio_url = _extract_googlevideo_url(info)
             if not audio_url:
                 continue
             return {
                 "stream_url": audio_url,
-                "client": client,
+                "client": player_client,
                 "title": info.get("title"),
                 "artist": info.get("uploader") or info.get("channel"),
                 "duration": int(info.get("duration") or 0),
@@ -287,96 +292,48 @@ async def stream_info(video_id: str):
     }
 
 
+def _redirect_headers(url: str) -> dict:
+    return {
+        "Location": url,
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Expose-Headers": "Location",
+    }
+
+
 @api.head("/audio/{video_id}")
 async def audio_head(video_id: str):
-    return Response(
-        status_code=200,
-        headers={
-            "Content-Type": "audio/mpeg",
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "no-store",
-        },
-    )
+    if not re.match(r"^[A-Za-z0-9_-]{5,15}$", video_id):
+        raise HTTPException(status_code=400, detail="Invalid video id")
+    data = await yt_stream(video_id)
+    upstream = (data or {}).get("stream_url")
+    if not upstream:
+        return Response(status_code=503)
+    return Response(status_code=302, headers=_redirect_headers(upstream))
 
 
 @api.get("/audio/{video_id}")
-async def audio_proxy(video_id: str, request: Request):
+async def audio_redirect(video_id: str):
+    """Redirects the client straight to the googlevideo CDN URL.
+
+    The browser's <audio> element follows 302 redirects transparently, so the
+    actual byte stream (and all Range requests) flows directly between the
+    user's browser and googlevideo – the backend never proxies audio bytes.
+    """
     if not re.match(r"^[A-Za-z0-9_-]{5,15}$", video_id):
         raise HTTPException(status_code=400, detail="Invalid video id")
 
     data = await yt_stream(video_id)
     upstream = (data or {}).get("stream_url")
     if not upstream:
-        raise HTTPException(
-            status_code=503,
-            detail="Stream unavailable. Backend needs YouTube cookies (YT_COOKIES_B64) to play this video.",
-        )
+        _CACHE.pop(f"stream::{video_id}", None)
+        data = await yt_stream(video_id)
+        upstream = (data or {}).get("stream_url")
 
-    range_header = request.headers.get("range") or request.headers.get("Range")
+    if not upstream:
+        raise HTTPException(status_code=503, detail="Stream unavailable")
 
-    def _mk_headers(url: str):
-        h = {
-            "User-Agent": YT_UA,
-            "Accept": "*/*",
-            "Accept-Encoding": "identity",
-            "Origin": "https://www.youtube.com",
-            "Referer": "https://www.youtube.com/",
-        }
-        if range_header:
-            h["Range"] = range_header
-        return h
-
-    client_timeout = httpx.Timeout(connect=15.0, read=None, write=15.0, pool=15.0)
-    hx = httpx.AsyncClient(timeout=client_timeout, follow_redirects=True)
-
-    attempt_url = upstream
-    response_stream = None
-    for attempt in range(2):
-        try:
-            req = hx.build_request("GET", attempt_url, headers=_mk_headers(attempt_url))
-            upstream_resp = await hx.send(req, stream=True)
-        except Exception:
-            logger.exception("audio proxy upstream error")
-            await hx.aclose()
-            raise HTTPException(status_code=502, detail="Upstream error")
-
-        if upstream_resp.status_code in (403, 410) and attempt == 0:
-            await upstream_resp.aclose()
-            _CACHE.pop(f"stream::{video_id}", None)
-            fresh = await yt_stream(video_id)
-            attempt_url = (fresh or {}).get("stream_url") or attempt_url
-            continue
-
-        response_stream = upstream_resp
-        break
-
-    if response_stream is None:
-        await hx.aclose()
-        raise HTTPException(status_code=502, detail="Upstream error")
-
-    status = response_stream.status_code
-    resp_headers = {
-        "Content-Type": response_stream.headers.get("Content-Type", "audio/mpeg"),
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "no-store",
-    }
-
-    for k in ("Content-Length", "Content-Range"):
-        if k in response_stream.headers:
-            resp_headers[k] = response_stream.headers[k]
-
-    async def _streamer():
-        try:
-            async for chunk in response_stream.aiter_bytes(chunk_size=64 * 1024):
-                if chunk:
-                    yield chunk
-        finally:
-            try: await response_stream.aclose()
-            except Exception: pass
-            try: await hx.aclose()
-            except Exception: pass
-
-    return StreamingResponse(_streamer(), status_code=status, headers=resp_headers)
+    return Response(status_code=302, headers=_redirect_headers(upstream))
 
 
 # ---------- Recommendation engine ----------
@@ -386,6 +343,7 @@ _STOPWORDS = {
     "and", "ve", "ile", "from", "mahni", "mahnisi", "mahnilari", "mahnılar",
     "yeni", "new", "kliplər", "klip", "cover", "live", "version", "edit",
 }
+
 
 def _norm_artist(name: str) -> str:
     name = (name or "").strip().lower()
@@ -648,7 +606,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "Location"],
 )
 
 
