@@ -1,6 +1,7 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Query, BackgroundTasks, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import time
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone
 import yt_dlp
+import httpx
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -42,6 +44,7 @@ YDL_STREAM_OPTS = {
 _CACHE: dict = {}
 _CACHE_TTL_FEATURED = 60 * 60 * 6   # 6 hours
 _CACHE_TTL_SEARCH   = 60 * 30       # 30 min
+_CACHE_TTL_STREAM   = 60 * 60 * 4   # 4 hours (googlevideo URL TTL ~6h)
 
 def cache_get(key: str):
     v = _CACHE.get(key)
@@ -129,6 +132,38 @@ async def yt_stream(video_id):
     return await asyncio.to_thread(_stream_sync, video_id)
 
 
+# ---------- Stream resolver with TTL cache ----------
+_STREAM_LOCKS: dict = {}
+
+def _get_stream_lock(video_id: str) -> asyncio.Lock:
+    lock = _STREAM_LOCKS.get(video_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _STREAM_LOCKS[video_id] = lock
+    return lock
+
+async def _resolve_stream(video_id: str, force: bool = False):
+    key = f"streamdata::{video_id}"
+    if not force:
+        hit = cache_get(key)
+        if hit is not None:
+            return hit
+    lock = _get_stream_lock(video_id)
+    async with lock:
+        if not force:
+            hit = cache_get(key)
+            if hit is not None:
+                return hit
+        try:
+            data = await yt_stream(video_id)
+        except Exception:
+            logger.exception("yt-dlp resolve failed for %s", video_id)
+            data = None
+        if data and data.get("stream_url"):
+            cache_set(key, data, _CACHE_TTL_STREAM)
+        return data
+
+
 # ---------- Models ----------
 class Song(BaseModel):
     id: str
@@ -173,27 +208,148 @@ async def _increment_play(video_id, data):
     )
 
 
-@api.get("/stream-info/{video_id}")
-async def stream_info(video_id: str):
-    data = None
-    try:
-        data = await yt_stream(video_id)
-    except Exception:
-        logger.exception("yt-dlp extract failed; fallback")
+# ---------- /stream/{id} - frontend metadata + proxy URL ----------
+@api.get("/stream/{video_id}")
+async def stream_meta(video_id: str, request: Request):
+    """
+    Frontend bu endpoint-i çağırır. `stream_url` olaraq öz proxy URL-imizi
+    qaytarırıq — beləliklə audio element həmişə eyni stabil URL ilə işləyir,
+    arxa planda Range request-lərində googlevideo expired URL-ləri ilə
+    qarşılaşmır. Bu, iOS lock screen / background playback üçün kritikdir.
+    """
+    data = await _resolve_stream(video_id)
     if not data:
+        # Sadəcə metadata fallback (arayışla)
         try:
             rs = await yt_search(video_id, limit=1, cache=False)
             if rs:
-                data = {"title": rs[0]["title"], "artist": rs[0]["artist"],
-                        "duration": rs[0]["duration"], "thumbnail": rs[0]["thumbnail"]}
-        except Exception: pass
+                data = {
+                    "title": rs[0]["title"], "artist": rs[0]["artist"],
+                    "duration": rs[0]["duration"], "thumbnail": rs[0]["thumbnail"],
+                    "stream_url": None,
+                }
+        except Exception:
+            pass
+
     if not data:
-        data = {"title": "Unknown", "artist": "Unknown", "duration": 0,
-                "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"}
-    await _increment_play(video_id, data)
-    return {"video_id": video_id, "title": data.get("title"), "artist": data.get("artist"),
-            "duration": data.get("duration"), "thumbnail": data.get("thumbnail"),
-            "stream_url": data.get("stream_url")}
+        raise HTTPException(status_code=404, detail="Stream not found")
+
+    base = str(request.base_url).rstrip("/")
+    proxy_url = f"{base}/api/audio/{video_id}" if data.get("stream_url") else None
+
+    try:
+        await _increment_play(video_id, data)
+    except Exception:
+        pass
+
+    return {
+        "video_id": video_id,
+        "title": data.get("title"),
+        "artist": data.get("artist"),
+        "duration": data.get("duration"),
+        "thumbnail": data.get("thumbnail"),
+        "stream_url": proxy_url,
+    }
+
+
+# Köhnə endpoint geriyə uyğunluq üçün saxlanılır
+@api.get("/stream-info/{video_id}")
+async def stream_info(video_id: str, request: Request):
+    return await stream_meta(video_id, request)
+
+
+# ---------- /audio/{id} - actual audio proxy stream ----------
+_AUDIO_HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=15.0)
+_PROXY_UA = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+)
+
+async def _open_upstream(url: str, range_header: Optional[str]):
+    headers = {"User-Agent": _PROXY_UA, "Accept": "*/*"}
+    if range_header:
+        headers["Range"] = range_header
+    upstream_client = httpx.AsyncClient(timeout=_AUDIO_HTTP_TIMEOUT, follow_redirects=True)
+    req = upstream_client.build_request("GET", url, headers=headers)
+    try:
+        resp = await upstream_client.send(req, stream=True)
+    except Exception:
+        await upstream_client.aclose()
+        raise
+    return upstream_client, resp
+
+
+@api.get("/audio/{video_id}")
+async def audio_proxy(video_id: str, request: Request):
+    """
+    Audio məzmununu proxy ilə ötürür.
+    - HTTP Range request-lərini tam dəstəkləyir (iOS lock screen üçün KRİTİK)
+    - Upstream URL expire olarsa (403/410/404), avtomatik refresh + retry
+    - Frontend-dən baxanda URL həmişə eyni stabil endpoint olur
+    """
+    range_header = request.headers.get("range")
+
+    data = await _resolve_stream(video_id)
+    if not data or not data.get("stream_url"):
+        raise HTTPException(status_code=404, detail="Audio not available")
+
+    upstream_url = data["stream_url"]
+    upstream_client = None
+    resp = None
+    try:
+        upstream_client, resp = await _open_upstream(upstream_url, range_header)
+
+        # Expired upstream — refresh + retry bir dəfə
+        if resp.status_code in (403, 404, 410):
+            try:
+                await resp.aclose()
+            except Exception:
+                pass
+            try:
+                await upstream_client.aclose()
+            except Exception:
+                pass
+            data = await _resolve_stream(video_id, force=True)
+            if not data or not data.get("stream_url"):
+                raise HTTPException(status_code=404, detail="Audio re-fetch failed")
+            upstream_client, resp = await _open_upstream(data["stream_url"], range_header)
+    except HTTPException:
+        raise
+    except Exception:
+        if upstream_client:
+            try: await upstream_client.aclose()
+            except Exception: pass
+        logger.exception("audio_proxy upstream error for %s", video_id)
+        raise HTTPException(status_code=502, detail="Upstream error")
+
+    async def _body():
+        try:
+            async for chunk in resp.aiter_raw():
+                yield chunk
+        except Exception:
+            pass
+        finally:
+            try: await resp.aclose()
+            except Exception: pass
+            try: await upstream_client.aclose()
+            except Exception: pass
+
+    pass_headers = {}
+    for h in ("content-type", "content-length", "content-range",
+              "accept-ranges", "etag", "last-modified"):
+        v = resp.headers.get(h)
+        if v:
+            pass_headers[h.title()] = v
+    pass_headers.setdefault("Accept-Ranges", "bytes")
+    pass_headers.setdefault("Cache-Control", "no-store")
+    pass_headers.setdefault("Content-Type", "audio/mp4")
+
+    return StreamingResponse(
+        _body(),
+        status_code=resp.status_code,
+        headers=pass_headers,
+        media_type=pass_headers.get("Content-Type"),
+    )
 
 
 # FIX: Mahnı bitəndə fərdi tövsiyələr verir (YouTube tərzi)
@@ -202,10 +358,8 @@ async def recommendations(video_id: str, session_id: Optional[str] = None):
     try:
         query = "azerbaijan top mahnilar 2025"
         if session_id:
-            # İstifadəçinin son dinlədiyi 3 mahnını tapırıq
             recent = await db.recently_played.find({"session_id": session_id}).sort("played_at", -1).to_list(3)
             if recent:
-                # Son dinlənilən sənətçilərə görə axtarış edir
                 artists = [r["artist"] for r in recent if r["artist"] != "Unknown artist"]
                 if artists:
                     query = f"{artists[0]} oxşar mahnılar"
@@ -217,7 +371,7 @@ async def recommendations(video_id: str, session_id: Optional[str] = None):
         return {"results": []}
 
 
-# ---- Favorites (Hər istifadəçiyə 1 like və düzgün sayğac) ----
+# ---- Favorites ----
 @api.get("/favorites")
 async def list_favorites(session_id: str):
     items = await db.favorites.find({"session_id": session_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
@@ -234,7 +388,7 @@ async def add_favorite(body: FavoriteCreate):
            "title": body.song.title, "artist": body.song.artist,
            "duration": body.song.duration, "thumbnail": body.song.thumbnail,
            "created_at": datetime.now(timezone.utc).isoformat()}
-    
+
     await db.favorites.insert_one(doc)
     await db.like_counts.update_one(
         {"id": body.song.id},
@@ -305,28 +459,24 @@ async def featured_categories():
     return {"categories": FEATURED_QUERIES}
 
 
-# FIX: Sayt açılanda istifadəçinin zövqünə uyğun mahnılar gətirir
 @api.get("/home-bootstrap")
 async def home_bootstrap(session_id: Optional[str] = None):
-    # Standart axtarışlar
     query_top = AZ_TOP_QUERIES[0]
     query_discovery = AZ_ARTIST_QUERIES[1]
 
     if session_id:
-        # Tarixçəni yoxla
         recent = await db.recently_played.find({"session_id": session_id}).sort("played_at", -1).to_list(5)
         if len(recent) >= 3:
-            # Əgər 3-dən çox mahnı dinləyibsə, zövqünə uyğun axtarış et
             fav_artist = recent[0]["artist"]
             query_discovery = f"{fav_artist} oxşar hitlər"
 
     top_task = asyncio.create_task(yt_search(query_top, limit=15, ttl=_CACHE_TTL_FEATURED))
     artists_task = asyncio.create_task(yt_search(AZ_ARTIST_QUERIES[0], limit=15, ttl=_CACHE_TTL_FEATURED))
     discovery_task = asyncio.create_task(yt_search(query_discovery, limit=15, ttl=_CACHE_TTL_FEATURED))
-    
+
     top, artists, disc = await asyncio.gather(top_task, artists_task, discovery_task, return_exceptions=True)
     def _ok(x): return x if isinstance(x, list) else []
-    
+
     return {
         "top": _ok(top),
         "artists": _ok(artists),
