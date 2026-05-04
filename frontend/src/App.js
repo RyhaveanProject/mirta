@@ -302,10 +302,25 @@ const usePlayer = (toast) => {
       setLoadingStream(false);
     }
 
-    axios.get(`${API}/stream-info/${song.id}`).then(({ data }) => {
-      if (data) setCurrent((c) => (c && c.id === song.id ? { ...c, ...data, id: song.id } : c));
-    }).catch(() => {});
+    axios.get(`${API}/stream/${song.id}`).then(({ data }) => {
 
+  if (data?.stream_url) {
+    AudioManager.attachStream(data.stream_url, {
+      title: song.title,
+      artist: song.artist,
+      thumbnail: song.thumbnail,
+    });
+  }
+
+  if (data) {
+    setCurrent((c) =>
+      c && c.id === song.id
+        ? { ...c, ...data, id: song.id }
+        : c
+    );
+  }
+
+}).catch(() => {});
     axios.post(`${API}/recently-played`, {
       session_id: sessionId,
       song: {
@@ -320,15 +335,30 @@ const usePlayer = (toast) => {
   }, [current, sessionId, toast, volume]);
 
   const togglePlay = useCallback(() => {
-    const p = ytPlayerRef.current;
-    if (!p || !current) return;
-    try {
-      const state = p.getPlayerState ? p.getPlayerState() : -1;
-      if (state === 1) { p.pauseVideo(); setPlaying(false); wasPlayingBeforeHiddenRef.current = false; }
-      else { p.playVideo(); setPlaying(true); wasPlayingBeforeHiddenRef.current = true; }
-    } catch {}
-  }, [current]);
+  const p = ytPlayerRef.current;
+  if (!p || !current) return;
 
+  try {
+    const state = p.getPlayerState ? p.getPlayerState() : -1;
+
+    if (state === 1) {
+      p.pauseVideo();
+
+      AudioManager.pause();
+
+      setPlaying(false);
+      wasPlayingBeforeHiddenRef.current = false;
+
+    } else {
+      p.playVideo();
+
+      AudioManager.resume();
+
+      setPlaying(true);
+      wasPlayingBeforeHiddenRef.current = true;
+    }
+  } catch {}
+}, [current]);
   const next = useCallback(async () => {
     let nextSong = null;
     if (queue.length) {
