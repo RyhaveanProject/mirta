@@ -3,11 +3,17 @@
 /**
  * RyAudioManager
  * --------------------------------------------------------------------------
- *  iOS-da arxa plana və ya kilid ekranına düşdükdə musiqinin dayanmaması
- *  üçün hazırlanmış manager. App-i tamamilə bağlayanda iOS bütün audio
- *  session-u dayandırır (bu sistem davranışıdır), amma app yalnız arxa
- *  plana keçəndə (home button / safari ikonu / kilid ekranı) çalmağa
- *  davam edir.
+ *  iOS arxa plan / kilid ekranı problemini kökündən həll edir.
+ *
+ *  Strategiya:
+ *    1. Mahnını oxumağa başlamamışdan əvvəl `fetch` ilə tam audio
+ *       məzmununu Blob kimi yükləyirik.
+ *    2. `URL.createObjectURL(blob)` ilə audio element-ə veririk.
+ *    3. Beləliklə audio element artıq backend-ə (və oradan
+ *       googlevideo.com müvəqqəti URL-lərinə) yenidən HTTP request
+ *       ATMIR — hər şey RAM-dan oxunur.
+ *    4. iOS arxa plana keçəndə bufer tükənmir, mahnı dayanmır,
+ *       backend tərəfli 404 / expired-URL problemləri əhəmiyyətsizləşir.
  *
  *  Public API (App.js bunlara güvənir):
  *    - attachStream(url, meta)
@@ -31,15 +37,9 @@ class RyAudioManager {
       audio.muted = false;
       audio.volume = 1.0;
 
-      // iOS-da inline / arxa plan səsi üçün vacibdir.
       audio.setAttribute("playsinline", "");
       audio.setAttribute("webkit-playsinline", "");
       audio.setAttribute("x-webkit-airplay", "allow");
-
-      // QEYD: crossOrigin="anonymous" QƏSDƏN qoyulmayıb.
-      // iOS WebKit CORS bayraqlı media element-ləri "remote media" kimi
-      // tanımır və arxa plana keçəndə audio session-u dərhal dayandırır.
-      // Bu, iOS-da arxa planda çalmamağın əsas səbəblərindəndir.
 
       audio.style.position = "fixed";
       audio.style.opacity = "0";
@@ -57,8 +57,9 @@ class RyAudioManager {
     this.audio = window.__RY_NATIVE_AUDIO__;
     this._wantPlaying = false;
     this._unlocked = false;
-    this._lastMeta = {};
-    this._reassertTimer = null;
+    this._currentBlobUrl = null;
+    this._currentSrcKey = null;
+    this._fetchAbort = null;
 
     this._setupUnlock();
     this._setupAudioEvents();
@@ -67,15 +68,11 @@ class RyAudioManager {
   }
 
   _isIOS() {
-    return (
-      /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
-    );
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
   }
 
   /**
-   * iOS-da audio element-i yalnız user gesture daxilində ilk dəfə
-   * play() etdikdə "active media session" qazanır. Buna görə ilk
-   * touch/click anında səssiz şəkildə audio-nu prime edirik.
+   * iOS audio session-u user gesture daxilində prime etmək üçün.
    */
   _setupUnlock() {
     const unlock = async () => {
@@ -146,11 +143,6 @@ class RyAudioManager {
     });
 
     a.addEventListener("pause", () => {
-      // Əgər istifadəçi (yaxud pause()) qəsdən pauz edibsə,
-      // _wantPlaying artıq false-dur və biz bir şey etmirik.
-      // Əgər biz hələ də çalmaq istəyiriksə (məs. iOS arxa
-      // planda spurious pause atıb), dərhal davam etdirməyə
-      // çalışırıq.
       if (this._wantPlaying) {
         const p = this.audio.play();
         if (p && typeof p.catch === "function") p.catch(() => {});
@@ -164,23 +156,11 @@ class RyAudioManager {
       this._setPlaybackState("none");
     });
 
-    a.addEventListener("loadedmetadata", () => {
-      this._updatePositionState();
-    });
+    a.addEventListener("loadedmetadata", () => this._updatePositionState());
+    a.addEventListener("durationchange", () => this._updatePositionState());
+    a.addEventListener("timeupdate", () => this._updatePositionState());
+    a.addEventListener("seeked", () => this._updatePositionState());
 
-    a.addEventListener("durationchange", () => {
-      this._updatePositionState();
-    });
-
-    a.addEventListener("timeupdate", () => {
-      this._updatePositionState();
-    });
-
-    a.addEventListener("seeked", () => {
-      this._updatePositionState();
-    });
-
-    // Şəbəkə buferi tükənəndə iOS bəzən pauz atır — yenidən başlat.
     a.addEventListener("stalled", () => {
       if (this._wantPlaying) {
         const p = this.audio.play();
@@ -202,9 +182,7 @@ class RyAudioManager {
     const safeSet = (action, handler) => {
       try {
         navigator.mediaSession.setActionHandler(action, handler);
-      } catch {
-        /* not supported */
-      }
+      } catch {}
     };
 
     safeSet("play", async () => {
@@ -258,10 +236,7 @@ class RyAudioManager {
     safeSet("seekto", (details) => {
       if (!details || typeof details.seekTime !== "number") return;
       try {
-        if (
-          details.fastSeek &&
-          typeof this.audio.fastSeek === "function"
-        ) {
+        if (details.fastSeek && typeof this.audio.fastSeek === "function") {
           this.audio.fastSeek(details.seekTime);
         } else {
           this.audio.currentTime = details.seekTime;
@@ -271,13 +246,6 @@ class RyAudioManager {
     });
   }
 
-  /**
-   * iOS PWA arxa plana keçəndə `visibilitychange`, `pagehide`, `freeze`
-   * event-lərini atır. Bu anlarda mediaSession.playbackState-i yenidən
-   * "playing" kimi təyin etmək, audio session-un OS tərəfindən "yaşayan"
-   * sayılmasını və beləliklə kilid ekranında çalmağa davam etməsini
-   * təmin edir.
-   */
   _setupVisibility() {
     const reassert = () => {
       if (this._wantPlaying) {
@@ -292,45 +260,96 @@ class RyAudioManager {
       }
     };
 
-    document.addEventListener("visibilitychange", () => {
-      reassert();
-    });
-
+    document.addEventListener("visibilitychange", reassert);
     window.addEventListener("pageshow", reassert);
     window.addEventListener("focus", reassert);
 
-    // iOS Safari arxa plana keçəndə `pagehide` və `freeze` atır.
-    // Burada playbackState="playing" qoymaq sistemə audio session-un
-    // hələ də aktiv olduğunu söyləyir.
     window.addEventListener("pagehide", () => {
-      if (this._wantPlaying) {
-        this._setPlaybackState("playing");
-      }
+      if (this._wantPlaying) this._setPlaybackState("playing");
     });
 
     document.addEventListener("freeze", () => {
-      if (this._wantPlaying) {
-        this._setPlaybackState("playing");
-      }
+      if (this._wantPlaying) this._setPlaybackState("playing");
     });
 
     document.addEventListener("resume", reassert);
+  }
+
+  _revokePreviousBlob() {
+    if (this._currentBlobUrl) {
+      try {
+        URL.revokeObjectURL(this._currentBlobUrl);
+      } catch {}
+      this._currentBlobUrl = null;
+    }
+  }
+
+  /**
+   * Stream URL-i fetch ilə tam Blob-a yükləyir və oxuduğu zaman audio
+   * element-in yenidən şəbəkə request etməsinə qarşı qoruma yaradır.
+   *
+   * Əgər fetch CORS / 404 səbəbindən uğursuz olsa, fallback olaraq
+   * URL-i birbaşa audio.src kimi istifadə edirik.
+   */
+  async _loadAsBlob(url) {
+    // Eyni stream-i təkrar yükləməyək
+    if (this._currentSrcKey === url && this._currentBlobUrl) {
+      return this._currentBlobUrl;
+    }
+
+    // Davam edən fetch varsa onu ləğv et
+    if (this._fetchAbort) {
+      try {
+        this._fetchAbort.abort();
+      } catch {}
+      this._fetchAbort = null;
+    }
+
+    const controller = new AbortController();
+    this._fetchAbort = controller;
+
+    try {
+      const resp = await fetch(url, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+
+      if (!resp.ok) {
+        throw new Error("fetch_failed_" + resp.status);
+      }
+
+      const blob = await resp.blob();
+
+      // Boş bloblardan qoruma
+      if (!blob || blob.size === 0) {
+        throw new Error("empty_blob");
+      }
+
+      this._revokePreviousBlob();
+
+      const objUrl = URL.createObjectURL(blob);
+      this._currentBlobUrl = objUrl;
+      this._currentSrcKey = url;
+      this._fetchAbort = null;
+      return objUrl;
+    } catch (e) {
+      this._fetchAbort = null;
+      // Fallback: birbaşa stream URL-i ver
+      console.log("[audioManager] blob fetch failed, falling back to direct streaming:", e && e.message);
+      return null;
+    }
   }
 
   async attachStream(url, meta = {}) {
     if (!url) return false;
 
     try {
-      this._lastMeta = meta || {};
       this._wantPlaying = true;
 
-      if (this.audio.src !== url) {
-        this.audio.src = url;
-        try {
-          this.audio.load();
-        } catch {}
-      }
-
+      // 1. Əvvəlcə MediaSession metadata qoy ki, blob yüklənərkən
+      //    kilid ekranı düzgün məlumat göstərsin.
       if (
         "mediaSession" in navigator &&
         typeof window.MediaMetadata !== "undefined"
@@ -353,6 +372,18 @@ class RyAudioManager {
         } catch {}
       }
 
+      // 2. Tam mahnını blob kimi yüklə (arxa planda dayanmamaq üçün
+      //    KRİTİK addım).
+      const blobUrl = await this._loadAsBlob(url);
+      const playableUrl = blobUrl || url;
+
+      if (this.audio.src !== playableUrl) {
+        this.audio.src = playableUrl;
+        try {
+          this.audio.load();
+        } catch {}
+      }
+
       await this.audio.play();
 
       window.__RY_WAS_PLAYING__ = true;
@@ -362,7 +393,19 @@ class RyAudioManager {
       return true;
     } catch (e) {
       console.log("audioManager attach failed", e);
-      return false;
+
+      // Son şans: blob yüklənməyibsə, birbaşa URL ilə cəhd et
+      try {
+        if (this.audio.src !== url) {
+          this.audio.src = url;
+          this.audio.load();
+        }
+        await this.audio.play();
+        this._setPlaybackState("playing");
+        return true;
+      } catch (e2) {
+        return false;
+      }
     }
   }
 
@@ -382,11 +425,19 @@ class RyAudioManager {
 
   destroy() {
     this._wantPlaying = false;
+    if (this._fetchAbort) {
+      try {
+        this._fetchAbort.abort();
+      } catch {}
+      this._fetchAbort = null;
+    }
     try {
       this.audio.pause();
       this.audio.removeAttribute("src");
       this.audio.load();
     } catch {}
+    this._revokePreviousBlob();
+    this._currentSrcKey = null;
     if ("mediaSession" in navigator) {
       try {
         navigator.mediaSession.metadata = null;
