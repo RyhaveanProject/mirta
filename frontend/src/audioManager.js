@@ -3,17 +3,12 @@
 /**
  * RyAudioManager
  * --------------------------------------------------------------------------
- *  iOS arxa plan / kilid ekranı problemini kökündən həll edir.
+ *  iOS arxa plan / kilid ekranı musiqisinin dayanmadan çalmasını təmin edir.
  *
- *  Strategiya:
- *    1. Mahnını oxumağa başlamamışdan əvvəl `fetch` ilə tam audio
- *       məzmununu Blob kimi yükləyirik.
- *    2. `URL.createObjectURL(blob)` ilə audio element-ə veririk.
- *    3. Beləliklə audio element artıq backend-ə (və oradan
- *       googlevideo.com müvəqqəti URL-lərinə) yenidən HTTP request
- *       ATMIR — hər şey RAM-dan oxunur.
- *    4. iOS arxa plana keçəndə bufer tükənmir, mahnı dayanmır,
- *       backend tərəfli 404 / expired-URL problemləri əhəmiyyətsizləşir.
+ *  Backend tərəfində /api/audio/{video_id} adlı stabil proxy stream
+ *  endpoint mövcuddur (Range request dəstəyi və avtomatik refresh ilə).
+ *  Frontend-dən baxanda audio URL həmişə eynidir, ona görə iOS arxa
+ *  planda Range request atanda CDN-də expired URL problemi yaranmır.
  *
  *  Public API (App.js bunlara güvənir):
  *    - attachStream(url, meta)
@@ -57,9 +52,6 @@ class RyAudioManager {
     this.audio = window.__RY_NATIVE_AUDIO__;
     this._wantPlaying = false;
     this._unlocked = false;
-    this._currentBlobUrl = null;
-    this._currentSrcKey = null;
-    this._fetchAbort = null;
 
     this._setupUnlock();
     this._setupAudioEvents();
@@ -71,9 +63,6 @@ class RyAudioManager {
     return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
   }
 
-  /**
-   * iOS audio session-u user gesture daxilində prime etmək üçün.
-   */
   _setupUnlock() {
     const unlock = async () => {
       if (this._unlocked) return;
@@ -275,81 +264,12 @@ class RyAudioManager {
     document.addEventListener("resume", reassert);
   }
 
-  _revokePreviousBlob() {
-    if (this._currentBlobUrl) {
-      try {
-        URL.revokeObjectURL(this._currentBlobUrl);
-      } catch {}
-      this._currentBlobUrl = null;
-    }
-  }
-
-  /**
-   * Stream URL-i fetch ilə tam Blob-a yükləyir və oxuduğu zaman audio
-   * element-in yenidən şəbəkə request etməsinə qarşı qoruma yaradır.
-   *
-   * Əgər fetch CORS / 404 səbəbindən uğursuz olsa, fallback olaraq
-   * URL-i birbaşa audio.src kimi istifadə edirik.
-   */
-  async _loadAsBlob(url) {
-    // Eyni stream-i təkrar yükləməyək
-    if (this._currentSrcKey === url && this._currentBlobUrl) {
-      return this._currentBlobUrl;
-    }
-
-    // Davam edən fetch varsa onu ləğv et
-    if (this._fetchAbort) {
-      try {
-        this._fetchAbort.abort();
-      } catch {}
-      this._fetchAbort = null;
-    }
-
-    const controller = new AbortController();
-    this._fetchAbort = controller;
-
-    try {
-      const resp = await fetch(url, {
-        method: "GET",
-        credentials: "include",
-        cache: "no-store",
-        signal: controller.signal,
-      });
-
-      if (!resp.ok) {
-        throw new Error("fetch_failed_" + resp.status);
-      }
-
-      const blob = await resp.blob();
-
-      // Boş bloblardan qoruma
-      if (!blob || blob.size === 0) {
-        throw new Error("empty_blob");
-      }
-
-      this._revokePreviousBlob();
-
-      const objUrl = URL.createObjectURL(blob);
-      this._currentBlobUrl = objUrl;
-      this._currentSrcKey = url;
-      this._fetchAbort = null;
-      return objUrl;
-    } catch (e) {
-      this._fetchAbort = null;
-      // Fallback: birbaşa stream URL-i ver
-      console.log("[audioManager] blob fetch failed, falling back to direct streaming:", e && e.message);
-      return null;
-    }
-  }
-
   async attachStream(url, meta = {}) {
     if (!url) return false;
 
     try {
       this._wantPlaying = true;
 
-      // 1. Əvvəlcə MediaSession metadata qoy ki, blob yüklənərkən
-      //    kilid ekranı düzgün məlumat göstərsin.
       if (
         "mediaSession" in navigator &&
         typeof window.MediaMetadata !== "undefined"
@@ -372,13 +292,8 @@ class RyAudioManager {
         } catch {}
       }
 
-      // 2. Tam mahnını blob kimi yüklə (arxa planda dayanmamaq üçün
-      //    KRİTİK addım).
-      const blobUrl = await this._loadAsBlob(url);
-      const playableUrl = blobUrl || url;
-
-      if (this.audio.src !== playableUrl) {
-        this.audio.src = playableUrl;
+      if (this.audio.src !== url) {
+        this.audio.src = url;
         try {
           this.audio.load();
         } catch {}
@@ -393,19 +308,7 @@ class RyAudioManager {
       return true;
     } catch (e) {
       console.log("audioManager attach failed", e);
-
-      // Son şans: blob yüklənməyibsə, birbaşa URL ilə cəhd et
-      try {
-        if (this.audio.src !== url) {
-          this.audio.src = url;
-          this.audio.load();
-        }
-        await this.audio.play();
-        this._setPlaybackState("playing");
-        return true;
-      } catch (e2) {
-        return false;
-      }
+      return false;
     }
   }
 
@@ -425,19 +328,11 @@ class RyAudioManager {
 
   destroy() {
     this._wantPlaying = false;
-    if (this._fetchAbort) {
-      try {
-        this._fetchAbort.abort();
-      } catch {}
-      this._fetchAbort = null;
-    }
     try {
       this.audio.pause();
       this.audio.removeAttribute("src");
       this.audio.load();
     } catch {}
-    this._revokePreviousBlob();
-    this._currentSrcKey = null;
     if ("mediaSession" in navigator) {
       try {
         navigator.mediaSession.metadata = null;
