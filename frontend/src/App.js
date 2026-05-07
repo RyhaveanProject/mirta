@@ -77,42 +77,14 @@ const useToast = () => {
   return { show, node };
 };
 
-/* ---------- YouTube IFrame Player loader ---------- */
-let ytApiPromise = null;
-const loadYTApi = () => {
-  if (ytApiPromise) return ytApiPromise;
-  ytApiPromise = new Promise((resolve) => {
-    if (window.YT && window.YT.Player) return resolve(window.YT);
-    const s = document.createElement("script");
-    s.src = "https://www.youtube.com/iframe_api";
-    document.body.appendChild(s);
-    window.onYouTubeIframeAPIReady = () => resolve(window.YT);
-  });
-  return ytApiPromise;
-};
+/* NOTE: YouTube IFrame Player was removed in v2.0 â iOS Safari blocks
+ * 3rd-party iframe background audio. Playback is now driven entirely by
+ * a native <audio> element via RyAudioManager + backend /api/audio proxy. */
 
-/* ---------- MediaSession + background keep-alive ---------- */
-const updateMediaSession = (song, player) => {
-  if (!("mediaSession" in navigator) || !song) return;
-  try {
-    navigator.mediaSession.metadata = new window.MediaMetadata({
-      title: song.title || "",
-      artist: song.artist || "",
-      album: "Ryhavean Spotify",
-      artwork: song.thumbnail ? [
-        { src: song.thumbnail, sizes: "96x96", type: "image/jpeg" },
-        { src: song.thumbnail, sizes: "192x192", type: "image/jpeg" },
-        { src: song.thumbnail, sizes: "512x512", type: "image/jpeg" },
-      ] : [],
-    });
-    navigator.mediaSession.setActionHandler("play", () => player.togglePlay());
-    navigator.mediaSession.setActionHandler("pause", () => player.togglePlay());
-    navigator.mediaSession.setActionHandler("previoustrack", () => player.prev());
-    navigator.mediaSession.setActionHandler("nexttrack", () => player.next());
-  } catch {}
-};
-
-/* ---------- Player Hook ---------- */
+/* ---------- Player Hook ----------
+ * Native <audio> via RyAudioManager. Stream source = backend proxy
+ * /api/audio/{video_id} (stable URL, Range-enabled, auto-refresh).
+ * iOS plays this in background + lock screen. */
 const usePlayer = (toast) => {
   const [current, setCurrent] = useState(null);
   const [queue, setQueue] = useState([]);
@@ -120,208 +92,93 @@ const usePlayer = (toast) => {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(0.9);
+  const [volume, setVolumeState] = useState(0.9);
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState("off");
   const [fullOpen, setFullOpen] = useState(false);
   const [loadingStream, setLoadingStream] = useState(false);
-  const ytPlayerRef = useRef(null);
-  const ytReadyRef = useRef(false);
-  const ytDivId = "yt-player-host";
-  const progressTimerRef = useRef(null);
   const sessionId = getSessionId();
   const nextFnRef = useRef(null);
   const togglePlayRef = useRef(null);
   const prevFnRef = useRef(null);
-  const playingRef = useRef(false);
-  const wasPlayingBeforeHiddenRef = useRef(false);
+  const currentIdRef = useRef(null);
   const repeatRef = useRef(repeat);
   useEffect(() => { repeatRef.current = repeat; }, [repeat]);
-  useEffect(() => { playingRef.current = playing; }, [playing]);
+  useEffect(() => { currentIdRef.current = current?.id || null; }, [current]);
 
+  /* ---------- AudioManager event wiring ---------- */
   useEffect(() => {
-    let cancelled = false;
-    let host = document.getElementById(ytDivId);
-    if (!host) {
-      host = document.createElement("div");
-      host.id = ytDivId;
-      host.setAttribute("aria-hidden", "true");
-      host.style.cssText = "position:fixed;bottom:0;right:0;width:200px;height:200px;opacity:0.01;pointer-events:none;z-index:-1;";
-      document.body.appendChild(host);
-    }
-    loadYTApi().then((YT) => {
-      if (cancelled) return;
-      ytPlayerRef.current = new YT.Player(ytDivId, {
-        height: "200", width: "200",
-        playerVars: {
-          autoplay: 1, controls: 0, playsinline: 1,
-          modestbranding: 1, rel: 0, origin: window.location.origin,
-          enablejsapi: 1, widget_referrer: window.location.origin
-        },
-        events: {
-          onReady: () => {
-            ytReadyRef.current = true;
-            try {
-              ytPlayerRef.current.setVolume(90);
-              ytPlayerRef.current.mute();
-            } catch {}
-          },
-          onStateChange: (e) => {
-            if (e.data === 1) { setPlaying(true); setLoadingStream(false); }
-            else if (e.data === 2) {
-              setPlaying(false);
-            }
-            else if (e.data === 3) { setLoadingStream(true); }
-            else if (e.data === 0) {
-              if (repeatRef.current === "one") {
-                try { ytPlayerRef.current.seekTo(0, true); ytPlayerRef.current.playVideo(); } catch {}
-              } else if (nextFnRef.current) {
-                nextFnRef.current();
-              }
-            }
-          },
-          onError: () => {
-            toast.show("Video unavailable. Trying another…");
-            setLoadingStream(false);
-            if (nextFnRef.current) nextFnRef.current();
-          },
-        },
-      });
+    const offTime = AudioManager.on("timeupdate", ({ currentTime, duration: d }) => {
+      if (!isNaN(currentTime)) setProgress(currentTime);
+      if (!isNaN(d) && d) setDuration(d);
     });
-    return () => { cancelled = true; };
-  }, []);
-
-  /* ---------- IOS BACKGROUND SILENCE LOOP ---------- */
-  useEffect(() => {
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-    if (!isIOS) return;
-
-    const silentAudio = new Audio("https://raw.githubusercontent.com/anars/blank-audio/master/250-milliseconds-of-silence.mp3");
-    silentAudio.loop = true;
-
-    if (playing) {
-      silentAudio.play().catch(() => {});
-    } else {
-      silentAudio.pause();
-    }
-    return () => silentAudio.pause();
-  }, [playing]);
-
-  /* ---------- BACKGROUND PLAYBACK KEEP-ALIVE ---------- */
-  useEffect(() => {
-    let wakeLock = null;
-
-    const requestWakeLock = async () => {
-      try {
-        if ("wakeLock" in navigator) {
-          wakeLock = await navigator.wakeLock.request("screen");
-        }
-      } catch {}
-    };
-
-    const releaseWakeLock = async () => {
-      try { if (wakeLock) { await wakeLock.release(); wakeLock = null; } } catch {}
-    };
-
-    const onVisibilityChange = () => {
-      const p = ytPlayerRef.current;
-      if (!p || !ytReadyRef.current) return;
-    };
-
-    const keepAliveInterval = setInterval(() => {
-      const p = ytPlayerRef.current;
-      if (!p || !ytReadyRef.current) return;
-      try {
-        const state = p.getPlayerState ? p.getPlayerState() : -1;
-        if (playingRef.current && state === 2) {
-          p.playVideo();
-        }
-      } catch {}
-    }, 1500);
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    requestWakeLock();
-
-    const onVisRelease = () => {
-      if (document.visibilityState === "visible") requestWakeLock();
-    };
-    document.addEventListener("visibilitychange", onVisRelease);
-
+    const offMeta = AudioManager.on("loadedmetadata", ({ duration: d }) => {
+      if (!isNaN(d) && d) setDuration(d);
+      setLoadingStream(false);
+    });
+    const offPlay = AudioManager.on("play", () => {
+      setPlaying(true);
+      setLoadingStream(false);
+    });
+    const offPause = AudioManager.on("pause", () => setPlaying(false));
+    const offEnded = AudioManager.on("ended", () => {
+      if (repeatRef.current === "one") {
+        AudioManager.seek(0);
+        AudioManager.resume();
+      } else if (nextFnRef.current) {
+        nextFnRef.current();
+      }
+    });
+    const offError = AudioManager.on("error", () => {
+      toast.show("Stream failed. Trying nextâ¦");
+      setLoadingStream(false);
+      if (nextFnRef.current) setTimeout(() => nextFnRef.current(), 300);
+    });
     return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      document.removeEventListener("visibilitychange", onVisRelease);
-      clearInterval(keepAliveInterval);
-      releaseWakeLock();
+      offTime(); offMeta(); offPlay(); offPause(); offEnded(); offError();
     };
+  }, [toast]);
+
+  /* ---------- Volume ---------- */
+  const setVolume = useCallback((v) => {
+    setVolumeState(v);
+    AudioManager.setVolume(v);
   }, []);
+  useEffect(() => { AudioManager.setVolume(volume); }, []); // initial
 
-  useEffect(() => {
-    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-    progressTimerRef.current = setInterval(() => {
-      const p = ytPlayerRef.current;
-      if (!p || !ytReadyRef.current) return;
-      try {
-        const cur = p.getCurrentTime ? p.getCurrentTime() : 0;
-        const dur = p.getDuration ? p.getDuration() : 0;
-        if (!isNaN(cur)) setProgress(cur);
-        if (!isNaN(dur) && dur) setDuration(dur);
-      } catch {}
-    }, 500);
-    return () => clearInterval(progressTimerRef.current);
-  }, []);
-
-  useEffect(() => {
-    const p = ytPlayerRef.current;
-    if (p && ytReadyRef.current) {
-      try { p.setVolume(Math.round(volume * 100)); } catch {}
-    }
-  }, [volume]);
-
+  /* ---------- Play song via backend proxy ---------- */
   const play = useCallback(async (song, opts = {}) => {
     if (!song || !song.id) return;
     setLoadingStream(true);
     const prevSong = current;
     setCurrent(song);
-    setPlaying(true);
     setProgress(0);
     setDuration(song.duration || 0);
 
-    for (let i = 0; i < 20 && !ytReadyRef.current; i++) {
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    // Fire stream resolution and attach â single source of truth
     try {
-      const p = ytPlayerRef.current;
-      p.loadVideoById({ videoId: song.id, startSeconds: 0, suggestedQuality: "small" });
-      setTimeout(() => {
-        try {
-          p.playVideo();
-          setTimeout(() => { try { p.unMute(); p.setVolume(Math.round(volume * 100)); } catch {} }, 600);
-        } catch {}
-      }, 300);
-    } catch {
+      const { data } = await axios.get(`${API}/stream/${song.id}`);
+      // Guard: user may have switched tracks while we were waiting
+      if (currentIdRef.current !== song.id) return;
+
+      if (data?.stream_url) {
+        await AudioManager.attachStream(data.stream_url, {
+          title: song.title || data.title,
+          artist: song.artist || data.artist,
+          thumbnail: song.thumbnail || data.thumbnail,
+        });
+        setCurrent((c) =>
+          c && c.id === song.id ? { ...c, ...data, id: song.id } : c
+        );
+      } else {
+        toast.show("Stream not available.");
+        setLoadingStream(false);
+      }
+    } catch (e) {
       toast.show("Couldn't start playback.");
       setLoadingStream(false);
     }
 
-    axios.get(`${API}/stream/${song.id}`).then(({ data }) => {
-
-  if (data?.stream_url) {
-    AudioManager.attachStream(data.stream_url, {
-      title: song.title,
-      artist: song.artist,
-      thumbnail: song.thumbnail,
-    });
-  }
-
-  if (data) {
-    setCurrent((c) =>
-      c && c.id === song.id
-        ? { ...c, ...data, id: song.id }
-        : c
-    );
-  }
-
-}).catch(() => {});
     axios.post(`${API}/recently-played`, {
       session_id: sessionId,
       song: {
@@ -333,33 +190,19 @@ const usePlayer = (toast) => {
     if (!opts.skipHistory && prevSong) {
       setHistory((h) => [prevSong, ...h].slice(0, 50));
     }
-  }, [current, sessionId, toast, volume]);
+  }, [current, sessionId, toast]);
 
   const togglePlay = useCallback(() => {
-  const p = ytPlayerRef.current;
-  if (!p || !current) return;
-
-  try {
-    const state = p.getPlayerState ? p.getPlayerState() : -1;
-
-    if (state === 1) {
-      p.pauseVideo();
-
-      AudioManager.pause();
-
-      setPlaying(false);
-      wasPlayingBeforeHiddenRef.current = false;
-
-    } else {
-      p.playVideo();
-
+    if (!current) return;
+    if (AudioManager.isPaused()) {
       AudioManager.resume();
-
       setPlaying(true);
-      wasPlayingBeforeHiddenRef.current = true;
+    } else {
+      AudioManager.pause();
+      setPlaying(false);
     }
-  } catch {}
-}, [current]);
+  }, [current]);
+
   const next = useCallback(async () => {
     let nextSong = null;
     if (queue.length) {
@@ -388,37 +231,34 @@ const usePlayer = (toast) => {
   useEffect(() => { togglePlayRef.current = togglePlay; }, [togglePlay]);
 
   const prev = useCallback(() => {
+    // If we are >3 seconds in, rewind to start instead of going back
+    if (AudioManager.getCurrentTime() > 3) {
+      AudioManager.seek(0);
+      return;
+    }
     if (history.length) {
       const h = [...history];
       const p = h.shift();
       setHistory(h);
       if (p) play(p, { skipHistory: true });
     } else {
-      const pl = ytPlayerRef.current;
-      try { if (pl) pl.seekTo(0, true); } catch {}
+      AudioManager.seek(0);
     }
   }, [history, play]);
 
   useEffect(() => { prevFnRef.current = prev; }, [prev]);
 
+  /* ---------- MediaSession prev/next hooks ---------- */
   useEffect(() => {
-    if (!current) return;
-    updateMediaSession(current, {
-      togglePlay: () => togglePlayRef.current && togglePlayRef.current(),
-      next: () => nextFnRef.current && nextFnRef.current(),
-      prev: () => prevFnRef.current && prevFnRef.current(),
-    });
-    if ("mediaSession" in navigator) {
-      try { navigator.mediaSession.playbackState = playing ? "playing" : "paused"; } catch {}
-    }
-  }, [current, playing]);
+    AudioManager.setNextPrev(
+      () => nextFnRef.current && nextFnRef.current(),
+      () => prevFnRef.current && prevFnRef.current()
+    );
+  }, [next, prev]);
 
   const seek = (ratio) => {
-    const p = ytPlayerRef.current;
-    try {
-      const dur = p.getDuration ? p.getDuration() : duration;
-      if (p && dur) p.seekTo(dur * ratio, true);
-    } catch {}
+    const dur = AudioManager.getDuration() || duration;
+    if (dur) AudioManager.seek(dur * ratio);
   };
 
   const enqueue = (song) => {
@@ -428,7 +268,7 @@ const usePlayer = (toast) => {
 
   return {
     current, queue, playing, progress, duration, volume, shuffle, repeat,
-    fullOpen, loadingStream, sessionId, ytDivId,
+    fullOpen, loadingStream, sessionId,
     play, togglePlay, next, prev, seek, enqueue,
     setShuffle, setRepeat, setVolume, setFullOpen, setQueue,
   };
@@ -447,7 +287,7 @@ const useDynamicBg = (song) => {
   }, [song?.thumbnail]);
 };
 
-/* ---------- ACTIVE USER TRACKER (YENİ) ---------- */
+/* ---------- ACTIVE USER TRACKER (YENÄ°) ---------- */
 const ActiveUserTracker = () => {
   const [count, setCount] = useState(1);
 
@@ -572,7 +412,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
     
     fetchTrending();
 
-    // Dinləyici əlavə edirik: bəyənmə dəyişəndə trendləri yenilə
+    // DinlÉyici ÉlavÉ edirik: bÉyÉnmÉ dÉyiÅÉndÉ trendlÉri yenilÉ
     window.addEventListener("fav_updated", fetchTrending);
 
     return () => { 
@@ -589,7 +429,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
       {recent.length > 0 && (
         <section className="section">
           <div className="section-head">
-            <div className="section-title vip-section"><Clock size={16} style={{marginRight: 6, display:"inline"}} /> Son dinlənilənlər</div>
+            <div className="section-title vip-section"><Clock size={16} style={{marginRight: 6, display:"inline"}} /> Son dinlÉnilÉnlÉr</div>
           </div>
           <div className="row-scroll">
   {recent.slice(0, 10).map((s) => (
@@ -602,7 +442,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title vip-section"><Sparkles size={16} style={{marginRight: 6, display:"inline"}} /> Azerbayjan Top Music 🇦🇿</div>
+          <div className="section-title vip-section"><Sparkles size={16} style={{marginRight: 6, display:"inline"}} /> Azerbayjan Top Music ð¦ð¿</div>
         </div>
         {loading ? (
           <div className="row-scroll">{[...Array(5)].map((_, i) => <Skeleton key={i} w="150px" h="190px" />)}</div>
@@ -618,7 +458,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title vip-section">Miri Yusif & daha çox</div>
+          <div className="section-title vip-section">Miri Yusif & daha Ã§ox</div>
         </div>
         {loading ? (
           <div className="row-scroll">{[...Array(5)].map((_, i) => <Skeleton key={i} w="150px" h="190px" />)}</div>
@@ -634,7 +474,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title vip-section">Aygün Kazımova kolleksiyası</div>
+          <div className="section-title vip-section">AygÃ¼n KazÄ±mova kolleksiyasÄ±</div>
         </div>
         {loading ? (
           <div className="row-scroll">{[...Array(5)].map((_, i) => <Skeleton key={i} w="150px" h="190px" />)}</div>
@@ -650,7 +490,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title vip-section"><TrendingUp size={16} style={{marginRight: 6, display:"inline"}} /> Ən çox bəyənilənlər</div>
+          <div className="section-title vip-section"><TrendingUp size={16} style={{marginRight: 6, display:"inline"}} /> Æn Ã§ox bÉyÉnilÉnlÉr</div>
         </div>
         {trending.length ? (
           <div className="row-scroll">
@@ -712,13 +552,13 @@ const SearchPage = ({ player, toggleFav, isFav }) => {
 
   return (
     <div className="page" data-testid="search-page">
-      <h1 className="page-title vip-title">Axtarış</h1>
+      <h1 className="page-title vip-title">AxtarÄ±Å</h1>
       <div className="search-wrap">
         <SearchIcon className="search-icon" size={18} />
         <input
           ref={inputRef}
           className="search-input"
-          placeholder="Mahnı, ifaçı, əhval…"
+          placeholder="MahnÄ±, ifaÃ§Ä±, Éhvalâ¦"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           data-testid="search-input"
@@ -730,7 +570,7 @@ const SearchPage = ({ player, toggleFav, isFav }) => {
             className="search-clear-btn"
             onClick={clearQuery}
             data-testid="search-clear-btn"
-            aria-label="Axtarışı təmizlə"
+            aria-label="AxtarÄ±ÅÄ± tÉmizlÉ"
           >
             <X size={16} />
           </button>
@@ -757,7 +597,7 @@ const SearchPage = ({ player, toggleFav, isFav }) => {
               </div>
             </div>
           )}
-          {!activeCat && <div className="empty">Yuxarıdan janr seç və ya mahnı adını yazıb axtar</div>}
+          {!activeCat && <div className="empty">YuxarÄ±dan janr seÃ§ vÉ ya mahnÄ± adÄ±nÄ± yazÄ±b axtar</div>}
         </>
       )}
 
@@ -766,7 +606,7 @@ const SearchPage = ({ player, toggleFav, isFav }) => {
           {loading ? (
             <div className="song-list">{[...Array(6)].map((_, i) => <Skeleton key={i} h="58px" />)}</div>
           ) : results.length === 0 ? (
-            <div className="empty">"{q}" üçün nəticə tapılmadı</div>
+            <div className="empty">"{q}" Ã¼Ã§Ã¼n nÉticÉ tapÄ±lmadÄ±</div>
           ) : (
             <div className="song-list">
               {results.map((s) => (
@@ -799,7 +639,7 @@ const FavoritesPage = ({ player, favs, toggleFav, isFav }) => {
   return (
     <div className="page" data-testid="favorites-page">
       <h1 className="page-title vip-title">My List</h1>
-      <div className="page-sub vip-subtitle">{favs.length} bəyənilmiş mahnı</div>
+      <div className="page-sub vip-subtitle">{favs.length} bÉyÉnilmiÅ mahnÄ±</div>
 
       {favs.length === 0 ? (
         <div className="empty">Favorite Song</div>
@@ -815,10 +655,10 @@ const FavoritesPage = ({ player, favs, toggleFav, isFav }) => {
 
       <section className="section">
         <div className="section-head">
-          <div className="section-title vip-section"><TrendingUp size={16} style={{marginRight:6, display:"inline"}} /> Ən çox bəyənilənlər</div>
+          <div className="section-title vip-section"><TrendingUp size={16} style={{marginRight:6, display:"inline"}} /> Æn Ã§ox bÉyÉnilÉnlÉr</div>
         </div>
         {trending.length === 0 ? (
-          <div className="empty">Hələ bəyənilmiş mahnı yoxdur</div>
+          <div className="empty">HÉlÉ bÉyÉnilmiÅ mahnÄ± yoxdur</div>
         ) : (
           <div className="song-list">
             {trending.map((s, i) => (
@@ -975,7 +815,7 @@ const BottomNav = ({ tab, setTab }) => {
   );
 };
 
-/* ---------- PREMIUM WELCOME / GİRİŞ EKRANI ---------- */
+/* ---------- PREMIUM WELCOME / GÄ°RÄ°Å EKRANI ---------- */
 const WelcomeScreen = ({ onEnter }) => {
   const [leaving, setLeaving] = useState(false);
   const handle = () => {
@@ -1009,7 +849,7 @@ const WelcomeScreen = ({ onEnter }) => {
             <span className="accent-line">Spotify</span>
           </h1>
           <p className="welcome-sub">
-            Global ən yaxşı mahnılar — premium, reklamsız və limitsiz dinləmə imkanı.
+            Global Én yaxÅÄ± mahnÄ±lar â premium, reklamsÄ±z vÉ limitsiz dinlÉmÉ imkanÄ±.
           </p>
         </div>
       </div>
@@ -1017,7 +857,7 @@ const WelcomeScreen = ({ onEnter }) => {
       <div className="welcome-bottom">
         <div className="welcome-features">
           <div className="welcome-feature"><Headphones size={13} /> HD Audio</div>
-          <div className="welcome-feature"><Radio size={13} /> Canlı Top</div>
+          <div className="welcome-feature"><Radio size={13} /> CanlÄ± Top</div>
           <div className="welcome-feature"><Zap size={13} /> Background</div>
         </div>
         <button className="welcome-btn" onClick={handle} data-testid="welcome-enter-btn">
@@ -1081,22 +921,22 @@ function App() {
     try {
       if (currentlyFav) {
         await axios.delete(`${API}/favorites/${s.id}?session_id=${player.sessionId}`);
-        toast.show("Sevimlilərdən silindi");
+        toast.show("SevimlilÉrdÉn silindi");
       } else {
         await axios.post(`${API}/favorites`, {
           session_id: player.sessionId,
           song: { id: s.id, title: s.title || "", artist: s.artist || "",
                   duration: s.duration || 0, thumbnail: s.thumbnail || "" },
         });
-        toast.show("❤️‍🔥");
+        toast.show("â¤ï¸âð¥");
       }
     } catch {
-      toast.show("Əməliyyat alınmadı, yenidən cəhd edin");
+      toast.show("ÆmÉliyyat alÄ±nmadÄ±, yenidÉn cÉhd edin");
       refreshFavs();
     } finally {
       setLikePending((p) => { const { [s.id]: _, ...rest } = p; return rest; });
       refreshFavs();
-      // Trend siyahılarını yeniləmək üçün siqnal göndəririk
+      // Trend siyahÄ±larÄ±nÄ± yenilÉmÉk Ã¼Ã§Ã¼n siqnal gÃ¶ndÉririk
       window.dispatchEvent(new Event("fav_updated"));
     }
   }, [favs, likePending, player.sessionId, refreshFavs, toast]);
@@ -1104,7 +944,7 @@ function App() {
   useEffect(() => {
     if (tab === "nowp") {
       if (player.current) player.setFullOpen(true);
-      else toast.show("Əvvəlcə bir mahnı seç");
+      else toast.show("ÆvvÉlcÉ bir mahnÄ± seÃ§");
       setTab((t) => (t === "nowp" ? "home" : t));
     }
   }, [tab, player.current]);
