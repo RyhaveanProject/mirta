@@ -6,8 +6,9 @@ on:
     branches:
       - main
 
+# Node.js 24 keçidi və xəbərdarlıqları gizlətmək üçün
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Node.js xəbərdarlığını aradan qaldırır
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -19,15 +20,15 @@ jobs:
         working-directory: frontend
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js (Latest)
         uses: actions/setup-node@v4
         with:
-          node-version: 24 # Ən son stabil Node versiyası
+          node-version: 24
 
-      - name: Setup Xcode
+      - name: Setup Xcode (Stable)
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -49,15 +50,25 @@ jobs:
           npx cap add ios || npx cap sync ios
           npx cap sync ios
 
-      - name: Configure iOS app (Info.plist & Bundle ID)
+      - name: Fix Info.plist & Bundle Configuration
         run: |
           set -e
           PLIST="ios/App/App/Info.plist"
           if [ -f "$PLIST" ]; then
+            # Display Name tənzimləməsi
             /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Ryhavean" "$PLIST" 2>/dev/null || \
               /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Ryhavean" "$PLIST"
+            
+            # Bundle ID və Digər vacib identifikatorlar (Scarlet üçün vacibdir)
+            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.ryhavean.music" "$PLIST" 2>/dev/null || \
+              /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.ryhavean.music" "$PLIST"
+            
             /usr/libexec/PlistBuddy -c "Set :CFBundleName Ryhavean" "$PLIST" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.ryhavean.music" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 1" "$PLIST" 2>/dev/null || true
+            
+            # Arxa fon musiqi icazələri
+            /usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$PLIST" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST" 2>/dev/null || true
             /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:1 string fetch" "$PLIST" 2>/dev/null || true
@@ -68,7 +79,7 @@ jobs:
           cd ios/App
           pod install --repo-update
 
-      - name: Build unsigned .xcarchive
+      - name: Build Unsigned Archive
         run: |
           cd ios/App
           xcodebuild \
@@ -78,22 +89,28 @@ jobs:
             -sdk iphoneos \
             -archivePath "$PWD/build/Ryhavean.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             archive | xcpretty || exit 1
 
-      - name: Package unsigned IPA
+      - name: Package Corrected IPA Structure
         run: |
           cd ios/App
           mkdir -p build/Payload
           APP_PATH=$(find build/Ryhavean.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.app" | head -n 1)
+          echo "Found App at: $APP_PATH"
           cp -R "$APP_PATH" build/Payload/
           cd build
+          # Scarlet-in tanıması üçün təmiz strukturla sıxışdırırıq
           zip -qr Ryhavean-unsigned.ipa Payload
+          ls -la Ryhavean-unsigned.ipa
           rm -rf Payload
 
-      - name: Upload IPA artifact
+      - name: Upload Finished IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Ryhavean-unsigned-ipa
+          name: Ryhavean-Final-IPA
           path: frontend/ios/App/build/Ryhavean-unsigned.ipa
-          retention-days: 30
+          retention-days: 7
+          if-no-files-found: error
