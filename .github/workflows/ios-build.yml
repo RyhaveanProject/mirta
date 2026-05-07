@@ -38,32 +38,21 @@ jobs:
         run: |
           sudo gem install xcpretty --no-document || gem install xcpretty --user-install --no-document
 
-      - name: Install JS dependencies (yarn ilə resolutions işləyir)
+      - name: Install JS dependencies
         shell: bash
         run: |
           set -e
           export NODE_OPTIONS="--max_old_space_size=4096 --openssl-legacy-provider"
-
           rm -rf node_modules package-lock.json
-
           if ! command -v yarn >/dev/null 2>&1; then
             npm install -g yarn --force
           fi
-
           yarn install --network-timeout 600000 --ignore-engines
-
           if [ ! -d "node_modules/react-scripts" ]; then
             echo "::error::react-scripts quraşdırılmadı"
             exit 1
           fi
-
           echo "✅ Dependencies hazırdır"
-          echo "📦 Top-level ajv version:"
-          node -p "require('./node_modules/ajv/package.json').version" || true
-          echo "📦 Top-level ajv-keywords version:"
-          node -p "require('./node_modules/ajv-keywords/package.json').version" || true
-          echo "📦 fork-ts-checker nested ajv-keywords:"
-          find node_modules/fork-ts-checker-webpack-plugin -name "ajv-keywords" -path "*/node_modules/*" -prune -exec sh -c 'node -p "require(\"$1/package.json\").version"' _ {} \; 2>/dev/null || true
 
       - name: Build React web app
         shell: bash
@@ -91,7 +80,6 @@ jobs:
           fi
           echo "✅ React build hazırdır:"
           du -sh build/
-          ls build/
 
       - name: Add iOS native project (Capacitor)
         shell: bash
@@ -102,21 +90,65 @@ jobs:
           fi
           npx cap sync ios
 
+      - name: Setup AppIcon.appiconset (logo iconlarını yerləşdir)
+        shell: bash
+        run: |
+          set -e
+          ICON_SRC="public/ios-icons"
+          ICON_DST="ios/App/App/Assets.xcassets/AppIcon.appiconset"
+
+          if [ ! -d "$ICON_SRC" ]; then
+            echo "::error::iOS icon mənbəyi tapılmadı: $ICON_SRC"
+            exit 1
+          fi
+
+          mkdir -p "$ICON_DST"
+
+          for sz in 20 29 40 58 60 76 80 87 120 152 167 180 1024; do
+            if [ -f "$ICON_SRC/AppIcon-${sz}.png" ]; then
+              cp -f "$ICON_SRC/AppIcon-${sz}.png" "$ICON_DST/AppIcon-${sz}.png"
+            fi
+          done
+
+          cat > "$ICON_DST/Contents.json" <<'JSON'
+          {
+            "images" : [
+              { "size" : "20x20",   "idiom" : "iphone", "filename" : "AppIcon-40.png",   "scale" : "2x" },
+              { "size" : "20x20",   "idiom" : "iphone", "filename" : "AppIcon-60.png",   "scale" : "3x" },
+              { "size" : "29x29",   "idiom" : "iphone", "filename" : "AppIcon-58.png",   "scale" : "2x" },
+              { "size" : "29x29",   "idiom" : "iphone", "filename" : "AppIcon-87.png",   "scale" : "3x" },
+              { "size" : "40x40",   "idiom" : "iphone", "filename" : "AppIcon-80.png",   "scale" : "2x" },
+              { "size" : "40x40",   "idiom" : "iphone", "filename" : "AppIcon-120.png",  "scale" : "3x" },
+              { "size" : "60x60",   "idiom" : "iphone", "filename" : "AppIcon-120.png",  "scale" : "2x" },
+              { "size" : "60x60",   "idiom" : "iphone", "filename" : "AppIcon-180.png",  "scale" : "3x" },
+              { "size" : "20x20",   "idiom" : "ipad",   "filename" : "AppIcon-20.png",   "scale" : "1x" },
+              { "size" : "20x20",   "idiom" : "ipad",   "filename" : "AppIcon-40.png",   "scale" : "2x" },
+              { "size" : "29x29",   "idiom" : "ipad",   "filename" : "AppIcon-29.png",   "scale" : "1x" },
+              { "size" : "29x29",   "idiom" : "ipad",   "filename" : "AppIcon-58.png",   "scale" : "2x" },
+              { "size" : "40x40",   "idiom" : "ipad",   "filename" : "AppIcon-40.png",   "scale" : "1x" },
+              { "size" : "40x40",   "idiom" : "ipad",   "filename" : "AppIcon-80.png",   "scale" : "2x" },
+              { "size" : "76x76",   "idiom" : "ipad",   "filename" : "AppIcon-76.png",   "scale" : "1x" },
+              { "size" : "76x76",   "idiom" : "ipad",   "filename" : "AppIcon-152.png",  "scale" : "2x" },
+              { "size" : "83.5x83.5","idiom" : "ipad",  "filename" : "AppIcon-167.png",  "scale" : "2x" },
+              { "size" : "1024x1024","idiom" : "ios-marketing","filename" : "AppIcon-1024.png","scale" : "1x" }
+            ],
+            "info" : { "version" : 1, "author" : "xcode" }
+          }
+          JSON
+
+          echo "✅ AppIcon.appiconset hazırdır:"
+          ls "$ICON_DST"
+
       - name: Patch Podfile (disable signing for all Pods)
         shell: bash
         run: |
           set -e
           PODFILE="ios/App/Podfile"
-          if [ ! -f "$PODFILE" ]; then
-            echo "::error::Podfile tapılmadı: $PODFILE"
-            exit 1
-          fi
-
           python3 - <<'PY'
           import re, pathlib
           p = pathlib.Path("ios/App/Podfile")
           src = p.read_text()
-          src = re.sub(r"post_install\s+do\s+\|installer\|.*?end\s*", "", src, flags=re.DOTALL)
+          src = re.sub(r"post_install\s+do\s+\|installer\|.*?\n\s*end\s*\n", "", src, flags=re.DOTALL)
           patch = """
           post_install do |installer|
             installer.pods_project.targets.each do |target|
@@ -134,10 +166,9 @@ jobs:
           end
           """
           p.write_text(src.rstrip() + "\n\n" + patch.strip() + "\n")
-          print(p.read_text())
           PY
 
-      - name: Patch project.pbxproj (deployment target & disable signing)
+      - name: Patch project.pbxproj
         shell: bash
         run: |
           set -e
@@ -148,29 +179,21 @@ jobs:
             sed -i '' 's/CODE_SIGN_IDENTITY = "[^"]*";/CODE_SIGN_IDENTITY = "";/g' "$PROJ" || true
             sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]*;/DEVELOPMENT_TEAM = "";/g' "$PROJ" || true
             sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = "[^"]*";/PROVISIONING_PROFILE_SPECIFIER = "";/g' "$PROJ" || true
+            sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]*;/PRODUCT_BUNDLE_IDENTIFIER = ${BUNDLE_ID};/g" "$PROJ" || true
           fi
 
-      - name: Patch AppDelegate.swift (enable background audio playback)
+      - name: Patch AppDelegate.swift (background audio)
         shell: bash
         run: |
           set -e
-          APP_DELEGATE="ios/App/App/AppDelegate.swift"
-          if [ ! -f "$APP_DELEGATE" ]; then
-            echo "::error::AppDelegate.swift tapılmadı: $APP_DELEGATE"
-            exit 1
-          fi
-
           python3 - <<'PY'
           import re, pathlib
           p = pathlib.Path("ios/App/App/AppDelegate.swift")
           src = p.read_text()
-
           if "import AVFoundation" not in src:
               src = re.sub(r"(import UIKit\s*\n)", r"\1import AVFoundation\n", src, count=1)
-
           if "AVAudioSession.sharedInstance()" not in src:
               audio_block = (
-                  "        // RyAudioManager: arxa plan / kilid ekranında musiqi davam etsin\n"
                   "        do {\n"
                   "            let session = AVAudioSession.sharedInstance()\n"
                   "            try session.setCategory(.playback, mode: .default, options: [])\n"
@@ -180,70 +203,96 @@ jobs:
                   "        }\n"
               )
               pattern = r"(func application\([^)]*didFinishLaunchingWithOptions[^{]*\{\s*\n)"
-              new_src, n = re.subn(pattern, r"\1" + audio_block, src, count=1)
-              if n == 0:
-                  print("::warning::didFinishLaunchingWithOptions tapılmadı")
-              else:
-                  src = new_src
-
-          if "applicationDidEnterBackground" in src and "session.setActive(true)" not in src.split("applicationDidEnterBackground")[1][:500]:
-              bg_pattern = r"(func applicationDidEnterBackground\([^)]*\)[^{]*\{\s*\n)"
-              bg_block = (
-                  "        do {\n"
-                  "            try AVAudioSession.sharedInstance().setActive(true)\n"
-                  "        } catch {\n"
-                  "            print(\"[Ryhavean] BG AudioSession error: \\(error)\")\n"
-                  "        }\n"
-              )
-              src = re.sub(bg_pattern, r"\1" + bg_block, src, count=1)
-
+              src, _ = re.subn(pattern, r"\1" + audio_block, src, count=1)
           p.write_text(src)
-          print(src)
           PY
 
-      - name: Fix Info.plist (Bundle ID, MinimumOSVersion, Background modes)
+      - name: Fix Info.plist (App name, Icons, Scarlet uyğunluğu)
         shell: bash
         run: |
           set -e
           PLIST="ios/App/App/Info.plist"
-          if [ ! -f "$PLIST" ]; then
-            echo "::error::Info.plist tapılmadı: $PLIST"
-            exit 1
-          fi
-
           PB=/usr/libexec/PlistBuddy
 
+          # ⭐ App adı: HƏM CFBundleDisplayName HƏM CFBundleName
           $PB -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" 2>/dev/null || \
             $PB -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST"
-
+          $PB -c "Set :CFBundleName ${APP_NAME}" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :CFBundleName string ${APP_NAME}" "$PLIST"
+          $PB -c "Set :CFBundleExecutable App" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :CFBundleExecutable string App" "$PLIST"
           $PB -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$PLIST" 2>/dev/null || \
             $PB -c "Add :CFBundleIdentifier string ${BUNDLE_ID}" "$PLIST"
-
           $PB -c "Set :CFBundleShortVersionString 1.0.0" "$PLIST" 2>/dev/null || \
             $PB -c "Add :CFBundleShortVersionString string 1.0.0" "$PLIST"
           $PB -c "Set :CFBundleVersion 1" "$PLIST" 2>/dev/null || \
             $PB -c "Add :CFBundleVersion string 1" "$PLIST"
+          $PB -c "Set :CFBundlePackageType APPL" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :CFBundlePackageType string APPL" "$PLIST"
 
+          # ⭐ Scarlet/Sideloadly üçün KRİTİK açarlar
+          $PB -c "Set :LSRequiresIPhoneOS true" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :LSRequiresIPhoneOS bool true" "$PLIST"
           $PB -c "Set :MinimumOSVersion ${DEPLOYMENT_TARGET}" "$PLIST" 2>/dev/null || \
             $PB -c "Add :MinimumOSVersion string ${DEPLOYMENT_TARGET}" "$PLIST"
+          $PB -c "Set :DTPlatformName iphoneos" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :DTPlatformName string iphoneos" "$PLIST"
 
+          $PB -c "Delete :CFBundleSupportedPlatforms" "$PLIST" 2>/dev/null || true
+          $PB -c "Add :CFBundleSupportedPlatforms array" "$PLIST"
+          $PB -c "Add :CFBundleSupportedPlatforms:0 string iPhoneOS" "$PLIST"
+
+          # ⭐ İcon görünməsi üçün
+          $PB -c "Set :CFBundleIconName AppIcon" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :CFBundleIconName string AppIcon" "$PLIST"
+
+          $PB -c "Delete :CFBundleIcons" "$PLIST" 2>/dev/null || true
+          $PB -c "Add :CFBundleIcons dict" "$PLIST"
+          $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon dict" "$PLIST"
+          $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName string AppIcon" "$PLIST"
+          $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles array" "$PLIST"
+          $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:0 string AppIcon60x60" "$PLIST"
+          $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:1 string AppIcon76x76" "$PLIST"
+
+          $PB -c "Delete :CFBundleIcons~ipad" "$PLIST" 2>/dev/null || true
+          $PB -c "Add :CFBundleIcons~ipad dict" "$PLIST"
+          $PB -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon dict" "$PLIST"
+          $PB -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconName string AppIcon" "$PLIST"
+          $PB -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles array" "$PLIST"
+          $PB -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:0 string AppIcon60x60" "$PLIST"
+          $PB -c "Add :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconFiles:1 string AppIcon76x76" "$PLIST"
+
+          # Background modes
           $PB -c "Delete :UIBackgroundModes" "$PLIST" 2>/dev/null || true
           $PB -c "Add :UIBackgroundModes array" "$PLIST"
           $PB -c "Add :UIBackgroundModes:0 string audio" "$PLIST"
           $PB -c "Add :UIBackgroundModes:1 string fetch" "$PLIST"
 
+          # ATS
           $PB -c "Delete :NSAppTransportSecurity" "$PLIST" 2>/dev/null || true
           $PB -c "Add :NSAppTransportSecurity dict" "$PLIST"
           $PB -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST"
 
+          # UIDeviceFamily
+          $PB -c "Delete :UIDeviceFamily" "$PLIST" 2>/dev/null || true
+          $PB -c "Add :UIDeviceFamily array" "$PLIST"
+          $PB -c "Add :UIDeviceFamily:0 integer 1" "$PLIST"
+          $PB -c "Add :UIDeviceFamily:1 integer 2" "$PLIST"
+
+          # Orientations
+          $PB -c "Delete :UISupportedInterfaceOrientations" "$PLIST" 2>/dev/null || true
+          $PB -c "Add :UISupportedInterfaceOrientations array" "$PLIST"
+          $PB -c "Add :UISupportedInterfaceOrientations:0 string UIInterfaceOrientationPortrait" "$PLIST"
+          $PB -c "Add :UISupportedInterfaceOrientations:1 string UIInterfaceOrientationLandscapeLeft" "$PLIST"
+          $PB -c "Add :UISupportedInterfaceOrientations:2 string UIInterfaceOrientationLandscapeRight" "$PLIST"
+
           $PB -c "Set :UIRequiresFullScreen true" "$PLIST" 2>/dev/null || \
             $PB -c "Add :UIRequiresFullScreen bool true" "$PLIST"
-
           $PB -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST" 2>/dev/null || \
             $PB -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST"
 
-          echo "✅ Info.plist yeniləndi:"
-          $PB -c "Print" "$PLIST" | head -60
+          echo "✅ Info.plist yeniləndi"
+          $PB -c "Print" "$PLIST"
 
       - name: Install CocoaPods
         shell: bash
@@ -259,7 +308,6 @@ jobs:
           set -e
           set -o pipefail
           cd ios/App
-
           XCPRETTY=$(command -v xcpretty || echo "")
 
           XCBUILD_CMD=(xcodebuild
@@ -289,7 +337,7 @@ jobs:
           fi
 
           if [ ! -d "build/${APP_NAME}.xcarchive/Products/Applications" ]; then
-            echo "::error::Archive yaradılmadı və ya pozulub"
+            echo "::error::Archive yaradılmadı"
             tail -100 build.log || true
             exit 1
           fi
@@ -304,12 +352,6 @@ jobs:
           ARCHIVE_APPS="build/${APP_NAME}.xcarchive/Products/Applications"
           APP_PATH=$(find "$ARCHIVE_APPS" -maxdepth 1 -type d -name "*.app" | head -n 1)
 
-          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
-            echo "::error::Archive daxilində .app tapılmadı"
-            ls -laR build/${APP_NAME}.xcarchive || true
-            exit 1
-          fi
-
           APP_BASENAME=$(basename "$APP_PATH")
           echo "📦 Tapılan .app: $APP_BASENAME"
 
@@ -319,66 +361,61 @@ jobs:
 
           DEST_APP="build/Payload/${APP_BASENAME}"
 
-          # Sideloadly/Scarlet üçün təmizlik
+          # ⭐ KRİTİK FIX: SADƏCƏ .app-ın özünün signature-larını sil,
+          # Frameworks-in _CodeSignature qovluqlarına TOXUNMA!
           rm -rf "${DEST_APP}/_CodeSignature"
           rm -f "${DEST_APP}/embedded.mobileprovision"
-          if [ -d "${DEST_APP}/Frameworks" ]; then
-            find "${DEST_APP}/Frameworks" -type d -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
-            find "${DEST_APP}/Frameworks" -type f -name "embedded.mobileprovision" -delete 2>/dev/null || true
-          fi
-          for sub in PlugIns Watch; do
-            if [ -d "${DEST_APP}/${sub}" ]; then
-              find "${DEST_APP}/${sub}" -type d -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
-              find "${DEST_APP}/${sub}" -type f -name "embedded.mobileprovision" -delete 2>/dev/null || true
-            fi
-          done
 
           APP_SIZE_KB=$(du -sk "${DEST_APP}" | cut -f1)
-          APP_SIZE_MB=$((APP_SIZE_KB / 1024))
-          echo "📏 .app ölçüsü: ${APP_SIZE_MB} MB (${APP_SIZE_KB} KB)"
+          echo "📏 .app ölçüsü: $((APP_SIZE_KB / 1024)) MB"
 
-          if [ -d "${DEST_APP}/Frameworks" ]; then
-            echo "🔗 Frameworks:"
-            ls "${DEST_APP}/Frameworks"
-          else
-            echo "::error::.app daxilində Frameworks qovluğu yoxdur — build natamamdır!"
+          if [ ! -d "${DEST_APP}/Frameworks" ]; then
+            echo "::error::Frameworks qovluğu yoxdur"
             exit 1
           fi
 
           if [ "$APP_SIZE_KB" -lt 1500 ]; then
-            echo "::error::.app bundle çox kiçikdir (${APP_SIZE_KB} KB). Build natamamdır."
+            echo "::error::.app bundle çox kiçikdir"
             exit 1
           fi
+
+          # AppIcon-ları yoxla
+          if ls "${DEST_APP}"/AppIcon*.png >/dev/null 2>&1; then
+            echo "✅ AppIcon faylları .app daxilindədir"
+          else
+            echo "::warning::AppIcon faylları tapılmadı"
+          fi
+
+          # Bundle adlarını yoxla
+          PB=/usr/libexec/PlistBuddy
+          DISP_NAME=$($PB -c "Print :CFBundleDisplayName" "${DEST_APP}/Info.plist" 2>/dev/null || echo "")
+          BUND_NAME=$($PB -c "Print :CFBundleName" "${DEST_APP}/Info.plist" 2>/dev/null || echo "")
+          echo "🏷  CFBundleDisplayName='${DISP_NAME}'  CFBundleName='${BUND_NAME}'"
 
           cd build
           rm -f "${APP_NAME}-unsigned.ipa"
-          zip -qry "${APP_NAME}-unsigned.ipa" Payload
+          zip -qry -X "${APP_NAME}-unsigned.ipa" Payload
           rm -rf Payload
 
           IPA_SIZE_KB=$(du -sk "${APP_NAME}-unsigned.ipa" | cut -f1)
-          IPA_SIZE_MB=$((IPA_SIZE_KB / 1024))
-          echo "✅ IPA hazırdır: ${APP_NAME}-unsigned.ipa (${IPA_SIZE_MB} MB / ${IPA_SIZE_KB} KB)"
+          echo "✅ IPA hazırdır: ${APP_NAME}-unsigned.ipa ($((IPA_SIZE_KB / 1024)) MB)"
 
-          # Strukturu yoxla, ölçü yox — Capacitor IPA-ları çox yaxşı sıxılır
-          if [ "$IPA_SIZE_KB" -lt 300 ]; then
-            echo "::error::IPA həqiqətən çox kiçikdir (${IPA_SIZE_KB} KB) — bundle pozuq ola bilər."
-            exit 1
-          fi
-
-          # IPA-nın daxili strukturunu doğrula
           unzip -l "${APP_NAME}-unsigned.ipa" > ipa_contents.txt
           if ! grep -q "Payload/.*\.app/Info.plist" ipa_contents.txt; then
             echo "::error::IPA-da Info.plist tapılmadı"
-            cat ipa_contents.txt
             exit 1
           fi
           if ! grep -q "Payload/.*\.app/Frameworks/Capacitor.framework" ipa_contents.txt; then
             echo "::error::IPA-da Capacitor.framework tapılmadı"
-            cat ipa_contents.txt
             exit 1
           fi
-          echo "✅ IPA strukturu doğrulandı"
+          if grep -q "Frameworks/.*\.framework/_CodeSignature/" ipa_contents.txt; then
+            echo "✅ Frameworks _CodeSignature qorunub (Scarlet üçün vacib)"
+          else
+            echo "::warning::Frameworks _CodeSignature tapılmadı"
+          fi
           rm -f ipa_contents.txt
+          echo "✅ IPA strukturu doğrulandı"
 
       - name: Upload Finished IPA
         uses: actions/upload-artifact@v4
