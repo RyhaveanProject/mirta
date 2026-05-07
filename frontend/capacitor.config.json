@@ -1,0 +1,35 @@
+{
+  "appId": "com.ryhavean.spotify",
+  "appName": "Ryhavean",
+  "webDir": "build",
+  "bundledWebRuntime": false,
+  "ios": {
+    "contentInset": "always",
+    "scheme": "Ryhavean",
+    "limitsNavigationsToAppBoundDomains": false,
+    "backgroundColor": "#0a0a0bff"
+  },
+  "server": {
+    "iosScheme": "https",
+    "androidScheme": "https",
+    "cleartext": true,
+    "allowNavigation": [
+      "*.youtube.com",
+      "*.googlevideo.com",
+      "*.ytimg.com",
+      "ryhavean-spotify-backend.onrender.com",
+      "*.firebaseio.com",
+      "*.firebaseapp.com"
+    ]
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "launchAutoHide": true,
+      "backgroundColor": "#0a0a0b",
+      "showSpinner": false,
+      "splashFullScreen": true,
+      "splashImmersive": true
+    }
+  }
+}
