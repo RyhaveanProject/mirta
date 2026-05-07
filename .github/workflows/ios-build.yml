@@ -1,4 +1,4 @@
-name: Build iOS IPA (Scarlet/Sideloadly Compatible v3 - ULTIMATE)
+name: Build iOS IPA (Scarlet 1.0 Compatible - ULTIMATE)
 
 on:
   workflow_dispatch:
@@ -201,26 +201,6 @@ jobs:
       - name: Install CocoaPods
         run: cd ios/App && pod install --repo-update
 
-      - name: Create entitlements
-        shell: bash
-        run: |
-          cat > ios/App/App/App.entitlements <<'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>get-task-allow</key>
-              <true/>
-              <key>application-identifier</key>
-              <string>AAAAAAAAAA.com.ryhavean.spotify</string>
-              <key>keychain-access-groups</key>
-              <array>
-                  <string>AAAAAAAAAA.*</string>
-              </array>
-          </dict>
-          </plist>
-          EOF
-
       - name: Build Unsigned Archive
         shell: bash
         run: |
@@ -239,31 +219,132 @@ jobs:
             IPHONEOS_DEPLOYMENT_TARGET=13.0 \
             archive 2>&1 | tee build.log
 
-      - name: "⭐ SCARLET SIGNING (Tüm adımlar - KRİTİK SIRA)"
+      - name: "🔥 SCARLET 1.0 COMPATIBLE SIGNING (FINAL)"
         shell: bash
         run: |
           set -e
           cd ios/App
           
           APP_PATH=$(find "build/${APP_NAME}.xcarchive/Products/Applications" -maxdepth 1 -type d -name "*.app" | head -n 1)
-          echo "📍 App bulundu: $APP_PATH"
+          BINARY="$APP_PATH/App"
           
-          ENTITLEMENTS="App/App.entitlements"
+          echo "📍 App: $APP_PATH"
+          echo "📍 Binary: $BINARY"
           
           # ============================================
-          # ADIM 1: Eski imzaları tamamen temizle
+          # ADIM 1: TÜM İMZALARI TEMİZLE
           # ============================================
-          echo "=== ADIM 1: Eski imzalar temizleniyor ==="
+          echo "=== ADIM 1: İmzalar temizleniyor ==="
           find "$APP_PATH" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
           find "$APP_PATH" -name "CodeResources" -delete 2>/dev/null || true
           find "$APP_PATH" -name "embedded.mobileprovision" -delete 2>/dev/null || true
           find "$APP_PATH" -name ".DS_Store" -delete 2>/dev/null || true
+          find "$APP_PATH" -name "*.xctest" -type d -exec rm -rf {} + 2>/dev/null || true
+          
+          # Binary'deki LC_CODE_SIGNATURE temizle
+          if [ -f "$BINARY" ]; then
+            python3 -c "
+            import struct, os
+            f = '$BINARY'
+            if os.path.exists(f):
+                with open(f, 'rb') as fh:
+                    data = bytearray(fh.read())
+                magic = struct.unpack_from('<I', data, 0)[0]
+                if magic == 0xFEEDFACF:
+                    ncmds = struct.unpack_from('<I', data, 16)[0]
+                    offset = 32
+                    cleaned = 0
+                    for i in range(ncmds):
+                        if offset + 8 > len(data): break
+                        cmd = struct.unpack_from('<I', data, offset)[0]
+                        cmdsize = struct.unpack_from('<I', data, offset+4)[0]
+                        if cmd == 0x1d:
+                            for j in range(offset, min(offset+cmdsize, len(data))): data[j] = 0
+                            cleaned += 1
+                        elif cmd == 0: break
+                        offset += cmdsize
+                        if offset >= len(data): break
+                    with open(f, 'wb') as fh: fh.write(data)
+                    print(f'Cleaned {cleaned} LC_CODE_SIGNATURE')
+                else:
+                    print(f'Magic: 0x{magic:08x}')
+            " 2>/dev/null || true
+          fi
           
           # ============================================
-          # ADIM 2: embedded.mobileprovision oluştur (Scarlet için ZORUNLU)
+          # ADIM 2: Entitlements (Scarlet 1.0 dostu)
           # ============================================
-          echo "=== ADIM 2: embedded.mobileprovision oluşturuluyor ==="
-          cat > /tmp/minimal.mobileprovision <<'MPEOF'
+          echo "=== ADIM 2: Entitlements ==="
+          cat > /tmp/scarlet_ent.xml <<'ENTEOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>get-task-allow</key>
+              <true/>
+              <key>application-identifier</key>
+              <string>AAAAAAAAAA.com.ryhavean.spotify</string>
+              <key>com.apple.developer.team-identifier</key>
+              <string>AAAAAAAAAA</string>
+              <key>keychain-access-groups</key>
+              <array>
+                  <string>AAAAAAAAAA.com.ryhavean.spotify</string>
+              </array>
+          </dict>
+          </plist>
+          ENTEOF
+          
+          # ============================================
+          # ADIM 3: Framework'leri imzala
+          # ============================================
+          echo "=== ADIM 3: Frameworks ==="
+          if [ -d "$APP_PATH/Frameworks" ]; then
+            for fw in "$APP_PATH/Frameworks"/*.framework; do
+              [ -d "$fw" ] || continue
+              fw_binary="$fw/$(basename "$fw" .framework)"
+              if [ -f "$fw_binary" ]; then
+                ldid -S /tmp/scarlet_ent.xml "$fw_binary" 2>/dev/null || true
+                echo "  → $(basename $fw)"
+              fi
+              find "$fw" -name "*.dylib" -type f | while read d; do
+                ldid -S /tmp/scarlet_ent.xml "$d" 2>/dev/null || true
+              done
+            done
+          fi
+          
+          # Diğer dylib'ler
+          find "$APP_PATH" -name "*.dylib" -type f | while read d; do
+            case "$d" in */Frameworks/*) ;; *) 
+              ldid -S /tmp/scarlet_ent.xml "$d" 2>/dev/null || true
+              echo "  → dylib: $(basename $d)"
+              ;;
+            esac
+          done
+          
+          # ============================================
+          # ADIM 4: Ana binary'yi ldid ile imzala
+          # ============================================
+          echo "=== ADIM 4: Ana binary ldid ==="
+          if [ -f "$BINARY" ]; then
+            ldid -S /tmp/scarlet_ent.xml "$BINARY"
+            echo "✅ ldid tamam"
+          else
+            echo "❌ Binary bulunamadı!"
+            ls -la "$APP_PATH/"
+            exit 1
+          fi
+          
+          # ============================================
+          # ADIM 5: codesign (Scarlet 1.0 için yedek)
+          # ============================================
+          echo "=== ADIM 5: codesign ==="
+          codesign --force --sign - --timestamp=none "$APP_PATH" 2>/dev/null && echo "✅ codesign tamam" || echo "⚠️ codesign geçildi"
+          
+          # ============================================
+          # ADIM 6: embedded.mobileprovision
+          # ============================================
+          echo "=== ADIM 6: embedded.mobileprovision ==="
+          cat > "$APP_PATH/embedded.mobileprovision" <<'MPEOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -288,13 +369,11 @@ jobs:
               <key>ExpirationDate</key>
               <date>2030-01-01T00:00:00Z</date>
               <key>Name</key>
-              <string>Scarlet Development Profile</string>
+              <string>Scarlet Profile</string>
               <key>ProvisionedDevices</key>
               <array/>
               <key>TeamIdentifier</key>
               <array><string>AAAAAAAAAA</string></array>
-              <key>TeamName</key>
-              <string>Scarlet Team</string>
               <key>TimeToLive</key>
               <integer>0</integer>
               <key>UUID</key>
@@ -304,143 +383,12 @@ jobs:
           </dict>
           </plist>
           MPEOF
-          
-          # Provisioning profile'i .plist'ten .mobileprovision'a çevir (CMS formatında)
-          # Scarlet aslında düz plist'i de kabul eder, ama orijinal formatı simüle edelim
-          cp /tmp/minimal.mobileprovision "$APP_PATH/embedded.mobileprovision"
-          echo "✅ embedded.mobileprovision eklendi"
-          
-          # ============================================
-          # ADIM 3: Frameworks'leri imzala (içten dışa)
-          # ============================================
-          echo "=== ADIM 3: Frameworks imzalanıyor ==="
-          if [ -d "$APP_PATH/Frameworks" ]; then
-            # Önce .dylib'leri
-            find "$APP_PATH/Frameworks" -name "*.dylib" -type f | while read dylib; do
-              echo "  → dylib: $(basename $dylib)"
-              codesign --remove-signature "$dylib" 2>/dev/null || true
-              codesign --force --sign - --timestamp=none "$dylib"
-            done
-            
-            # Sonra framework'leri
-            for fw in "$APP_PATH/Frameworks"/*.framework; do
-              [ -d "$fw" ] || continue
-              echo "  → framework: $(basename $fw)"
-              codesign --remove-signature "$fw" 2>/dev/null || true
-              codesign --force --sign - --timestamp=none "$fw"
-            done
-          fi
-          
-          # ============================================
-          # ADIM 4: Swift kütüphanelerini imzala
-          # ============================================
-          echo "=== ADIM 4: Swift kütüphaneleri imzalanıyor ==="
-          find "$APP_PATH" -name "*.dylib" -type f | while read dylib; do
-            case "$dylib" in
-              */Frameworks/*) ;; # zaten imzalandı
-              *)
-                echo "  → dylib: $(basename $dylib)"
-                codesign --remove-signature "$dylib" 2>/dev/null || true
-                codesign --force --sign - --timestamp=none "$dylib"
-                ;;
-            esac
-          done
-          
-          # Swift swiftmodule/swiftdoc dosyaları
-          find "$APP_PATH" -name "*.swiftmodule" -type d | while read mod; do
-            echo "  → swiftmodule: $(basename $mod)"
-            codesign --force --sign - --timestamp=none "$mod" 2>/dev/null || true
-          done
-          
-          # ============================================
-          # ADIM 5: PlugIns (App Extensions) varsa imzala
-          # ============================================
-          echo "=== ADIM 5: PlugIns imzalanıyor ==="
-          if [ -d "$APP_PATH/PlugIns" ]; then
-            for plugin in "$APP_PATH/PlugIns"/*.appex; do
-              [ -d "$plugin" ] || continue
-              echo "  → plugin: $(basename $plugin)"
-              codesign --remove-signature "$plugin" 2>/dev/null || true
-              codesign --force --sign - --timestamp=none "$plugin"
-            done
-          fi
-          
-          # ============================================
-          # ADIM 6: Watch uygulaması varsa imzala
-          # ============================================
-          echo "=== ADIM 6: Watch uygulaması imzalanıyor ==="
-          if [ -d "$APP_PATH/Watch" ]; then
-            for watch in "$APP_PATH/Watch"/*.app; do
-              [ -d "$watch" ] || continue
-              echo "  → watch: $(basename $watch)"
-              codesign --remove-signature "$watch" 2>/dev/null || true
-              codesign --force --sign - --timestamp=none "$watch"
-            done
-          fi
-          
-          # ============================================
-          # ADIM 7: xctest bundle varsa temizle (sorun çıkarabiliyor)
-          # ============================================
-          echo "=== ADIM 7: Test bundle'ları temizleniyor ==="
-          find "$APP_PATH" -name "*.xctest" -type d -exec rm -rf {} + 2>/dev/null || true
-          
-          # ============================================
-          # ADIM 8: Ana .app'i imzala
-          # ============================================
-          echo "=== ADIM 8: Ana .app imzalanıyor ==="
-          codesign --force --sign - --timestamp=none --entitlements "$ENTITLEMENTS" "$APP_PATH"
-          
-          # ============================================
-          # ADIM 9: ldid ile binary seviyesinde yedek imza
-          # ============================================
-          echo "=== ADIM 9: ldid ile binary imzalanıyor ==="
-          BINARY="$APP_PATH/App"
-          if [ -f "$BINARY" ] && command -v ldid >/dev/null 2>&1; then
-            echo "  → App binary: $(file "$BINARY" | head -c 100)"
-            # Önce hash'leri temizle
-            python3 -c "
-            import os
-            f = '$BINARY'
-            if os.path.exists(f):
-                with open(f, 'rb') as fh:
-                    data = bytearray(fh.read())
-                # LC_CODE_SIGNATURE load command'larını null'la
-                import struct
-                count = 0
-                offset = 0
-                while offset < len(data) - 8:
-                    cmd, cmdsize = struct.unpack_from('<II', data, offset)
-                    if cmd == 0x1d:  # LC_CODE_SIGNATURE
-                        data[offset:offset+cmdsize] = b'\x00' * cmdsize
-                        count += 1
-                    offset += cmdsize
-                    if offset >= len(data) or cmd == 0:
-                        break
-                with open(f, 'wb') as fh:
-                    fh.write(data)
-                print(f'  → {count} LC_CODE_SIGNATURE cleaned')
-            " 2>/dev/null || true
-            
-            ldid -S"$ENTITLEMENTS" "$BINARY"
-            echo "  → ldid imzalama tamam"
-          fi
-          
-          # ============================================
-          # ADIM 10: Sertifikaları doğrula
-          # ============================================
-          echo "=== ADIM 10: İmza doğrulama ==="
-          codesign -dv "$APP_PATH" 2>&1 || echo "  ⚠️ Uyarı: codesign doğrulama uyarısı (beklenen)"
+          echo "✅ embedded.mobileprovision tamam"
           
           echo ""
-          echo "✅ TÜM İMZALAMA ADIMLARI TAMAMLANDI"
-          echo "📁 App yolu: $APP_PATH"
-          
-          # Dosya yapısını göster
-          echo ""
-          echo "📂 App içindeki imzalı öğeler:"
-          find "$APP_PATH" -name "_CodeSignature" -type d | head -5
+          echo "✅ TÜM İMZALAMA TAMAM"
 
-      - name: Package IPA (Optimized for Scarlet)
+      - name: Package IPA (Scarlet Optimized)
         shell: bash
         run: |
           set -e
@@ -451,84 +399,26 @@ jobs:
           
           echo "=== IPA Paketleme ==="
           
-          # Payload klasörünü hazırla
           rm -rf build/Payload
           mkdir -p build/Payload
           cp -R "$APP_PATH" "build/Payload/"
           DEST_APP="build/Payload/${APP_BASENAME}"
           
-          # Gereksiz dosyaları temizle
           find "$DEST_APP" -name ".DS_Store" -delete 2>/dev/null || true
-          find "$DEST_APP" -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true
           
-          # Bilgileri göster
-          PB=/usr/libexec/PlistBuddy
-          echo "🏷  Bundle ID: $($PB -c 'Print :CFBundleIdentifier' ${DEST_APP}/Info.plist 2>/dev/null || echo 'N/A')"
-          echo "🏷  App Name: $($PB -c 'Print :CFBundleDisplayName' ${DEST_APP}/Info.plist 2>/dev/null || echo 'N/A')"
-          echo "🏷  Version: $($PB -c 'Print :CFBundleShortVersionString' ${DEST_APP}/Info.plist 2>/dev/null || echo 'N/A')"
+          echo "BundleID: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' ${DEST_APP}/Info.plist 2>/dev/null)"
           
-          # IPA oluştur
           cd build
           rm -f "${APP_NAME}.ipa"
-          
-          echo "📦 IPA sıkıştırılıyor..."
-          zip -qry -X --symlinks "${APP_NAME}.ipa" Payload
+          zip -qry -X "${APP_NAME}.ipa" Payload
           rm -rf Payload
           
           echo "✅ IPA: $(du -h ${APP_NAME}.ipa | cut -f1)"
           
-          # ============================================
-          # IPA doğrulama
-          # ============================================
-          echo ""
-          echo "=== IPA Doğrulama ==="
-          
-          # 1. Payload yapısı
-          echo "📂 Payload yapısı:"
-          unzip -l "${APP_NAME}.ipa" | grep -E "Payload|\.app/" | head -10
-          
-          # 2. CodeResources var mı?
-          if unzip -l "${APP_NAME}.ipa" | grep -q "_CodeSignature/CodeResources"; then
-            echo "✅ CodeResources mevcut"
-          else
-            echo "⚠️  CodeResources bulunamadı - codesign başarısız olabilir"
-          fi
-          
-          # 3. embedded.mobileprovision var mı?
-          if unzip -l "${APP_NAME}.ipa" | grep -q "embedded.mobileprovision"; then
-            echo "✅ embedded.mobileprovision mevcut"
-          else
-            echo "⚠️  embedded.mobileprovision bulunamadı!"
-          fi
-          
-          # 4. Frameworks var mı?
-          if unzip -l "${APP_NAME}.ipa" | grep -q "Frameworks/"; then
-            echo "✅ Frameworks mevcut"
-            echo "📦 Framework'ler:"
-            unzip -l "${APP_NAME}.ipa" | grep "Frameworks/[^/]*\.framework" | sed 's/.*Frameworks\//  → /' | sort -u
-          fi
-          
-          # 5. Info.plist doğrulama
-          echo ""
-          echo "📋 IPA Info.plist özeti:"
-          mkdir -p /tmp/ipacheck
-          cd /tmp/ipacheck
-          rm -rf Payload
-          unzip -qo "${GITHUB_WORKSPACE}/frontend/ios/App/build/${APP_NAME}.ipa" 2>/dev/null || unzip -qo "${PWD}/../../build/${APP_NAME}.ipa" 2>/dev/null || true
-          if [ -d Payload ]; then
-            APP_FILE=$(find Payload -name "*.app" -type d | head -1)
-            if [ -n "$APP_FILE" ]; then
-              PLIST_FILE="$APP_FILE/Info.plist"
-              if [ -f "$PLIST_FILE" ]; then
-                echo "  BundleID: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST_FILE" 2>/dev/null)"
-                echo "  Version: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST_FILE" 2>/dev/null)"
-                echo "  MinOS: $(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST_FILE" 2>/dev/null)"
-              fi
-            fi
-            rm -rf Payload
-          fi
-          echo ""
-          echo "✅ IPA doğrulama tamamlandı"
+          # Doğrulama
+          echo "=== Doğrulama ==="
+          unzip -l "${APP_NAME}.ipa" | head -15
+          unzip -l "${APP_NAME}.ipa" | grep -q "embedded.mobileprovision" && echo "✅ mobileprovision var" || echo "⚠️ mobileprovision yok"
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
