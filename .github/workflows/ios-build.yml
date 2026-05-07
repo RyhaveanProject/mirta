@@ -1,0 +1,141 @@
+name: Build iOS Unsigned IPA
+
+# Pulsuz iOS IPA build — macOS runner istifadə edir.
+# Manual trigger və ya main branch-a push olunduqda işləyir.
+# Çıxış: unsigned .ipa faylı GitHub Actions Artifacts-də göstərilir.
+# Onu endirin və AltStore / Sideloadly / Scarlet ilə pulsuz Apple ID
+# istifadə edərək imzalayın.
+#
+# Bu workflow Capacitor.js istifadə edir (mövcud React web app-i
+# native iOS shell-ə bükmək üçün — rewrite tələb etmir).
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-14
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install JS dependencies
+        run: |
+          if [ -f yarn.lock ]; then
+            yarn install --frozen-lockfile
+          else
+            npm install --legacy-peer-deps
+          fi
+
+      - name: Build React web app
+        run: |
+          cat > .env.production <<EOF
+          REACT_APP_BACKEND_URL=https://ryhavean-spotify-backend.onrender.com
+          GENERATE_SOURCEMAP=false
+          EOF
+          npm run build
+
+      - name: Add iOS native project (Capacitor)
+        run: |
+          npx cap add ios || npx cap sync ios
+          npx cap sync ios
+
+      - name: Configure iOS app icons
+        run: |
+          set -e
+          ICON_SET="ios/App/App/Assets.xcassets/AppIcon.appiconset"
+          if [ -d "$ICON_SET" ]; then
+            cp -f public/ios-icons/AppIcon-20.png   "$ICON_SET/AppIcon-20x20@1x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-40.png   "$ICON_SET/AppIcon-20x20@2x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-60.png   "$ICON_SET/AppIcon-20x20@3x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-29.png   "$ICON_SET/AppIcon-29x29@1x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-58.png   "$ICON_SET/AppIcon-29x29@2x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-87.png   "$ICON_SET/AppIcon-29x29@3x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-40.png   "$ICON_SET/AppIcon-40x40@1x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-80.png   "$ICON_SET/AppIcon-40x40@2x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-120.png  "$ICON_SET/AppIcon-40x40@3x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-120.png  "$ICON_SET/AppIcon-60x60@2x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-180.png  "$ICON_SET/AppIcon-60x60@3x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-76.png   "$ICON_SET/AppIcon-76x76@1x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-152.png  "$ICON_SET/AppIcon-76x76@2x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-167.png  "$ICON_SET/AppIcon-83.5x83.5@2x.png" 2>/dev/null || true
+            cp -f public/ios-icons/AppIcon-1024.png "$ICON_SET/AppIcon-512@2x.png" 2>/dev/null || true
+          fi
+
+          SPLASH_SET="ios/App/App/Assets.xcassets/Splash.imageset"
+          if [ -d "$SPLASH_SET" ]; then
+            cp -f public/icons/splash.png "$SPLASH_SET/splash-2732x2732.png" 2>/dev/null || true
+            cp -f public/icons/splash.png "$SPLASH_SET/splash-2732x2732-1.png" 2>/dev/null || true
+            cp -f public/icons/splash.png "$SPLASH_SET/splash-2732x2732-2.png" 2>/dev/null || true
+          fi
+
+          # Display Name = Ryhavean
+          PLIST="ios/App/App/Info.plist"
+          if [ -f "$PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Ryhavean" "$PLIST" 2>/dev/null || \
+              /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Ryhavean" "$PLIST"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleName Ryhavean" "$PLIST" 2>/dev/null || true
+            # Background audio capability
+            /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:1 string fetch" "$PLIST" 2>/dev/null || true
+          fi
+
+      - name: Install CocoaPods
+        run: |
+          cd ios/App
+          pod install --repo-update
+
+      - name: Build unsigned .xcarchive
+        run: |
+          cd ios/App
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$PWD/build/Ryhavean.xcarchive" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            archive | xcpretty || exit 1
+
+      - name: Package unsigned IPA
+        run: |
+          cd ios/App
+          mkdir -p build/Payload
+          APP_PATH=$(find build/Ryhavean.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.app" | head -n 1)
+          echo "App path: $APP_PATH"
+          cp -R "$APP_PATH" build/Payload/
+          cd build
+          zip -qr Ryhavean-unsigned.ipa Payload
+          ls -la Ryhavean-unsigned.ipa
+          rm -rf Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ryhavean-unsigned-ipa
+          path: frontend/ios/App/build/Ryhavean-unsigned.ipa
+          retention-days: 30
+          if-no-files-found: error
