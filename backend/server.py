@@ -212,14 +212,14 @@ async def _increment_play(video_id, data):
 @api.get("/stream/{video_id}")
 async def stream_meta(video_id: str, request: Request):
     """
-    Frontend bu endpoint-i çağırır. `stream_url` olaraq öz proxy URL-imizi
-    qaytarırıq — beləliklə audio element həmişə eyni stabil URL ilə işləyir,
-    arxa planda Range request-lərində googlevideo expired URL-ləri ilə
-    qarşılaşmır. Bu, iOS lock screen / background playback üçün kritikdir.
+    Frontend bu endpoint-i Ã§aÄÄ±rÄ±r. `stream_url` olaraq Ã¶z proxy URL-imizi
+    qaytarÄ±rÄ±q â belÉliklÉ audio element hÉmiÅÉ eyni stabil URL ilÉ iÅlÉyir,
+    arxa planda Range request-lÉrindÉ googlevideo expired URL-lÉri ilÉ
+    qarÅÄ±laÅmÄ±r. Bu, iOS lock screen / background playback Ã¼Ã§Ã¼n kritikdir.
     """
     data = await _resolve_stream(video_id)
     if not data:
-        # Sadəcə metadata fallback (arayışla)
+        # SadÉcÉ metadata fallback (arayÄ±Åla)
         try:
             rs = await yt_search(video_id, limit=1, cache=False)
             if rs:
@@ -252,7 +252,7 @@ async def stream_meta(video_id: str, request: Request):
     }
 
 
-# Köhnə endpoint geriyə uyğunluq üçün saxlanılır
+# KÃ¶hnÉ endpoint geriyÉ uyÄunluq Ã¼Ã§Ã¼n saxlanÄ±lÄ±r
 @api.get("/stream-info/{video_id}")
 async def stream_info(video_id: str, request: Request):
     return await stream_meta(video_id, request)
@@ -279,13 +279,31 @@ async def _open_upstream(url: str, range_header: Optional[str]):
     return upstream_client, resp
 
 
+@api.head("/audio/{video_id}")
+async def audio_proxy_head(video_id: str):
+    """
+    HEAD dÉstÉyi â iOS Safari bÉzÉn stream-É mÃ¼raciÉtdÉn ÉvvÉl HEAD gÃ¶ndÉrir.
+    Audio mÉzmununu yÃ¼klÉmÉdÉn sadÉcÉ baÅlÄ±qlarÄ± qaytarÄ±rÄ±q.
+    """
+    data = await _resolve_stream(video_id)
+    if not data or not data.get("stream_url"):
+        raise HTTPException(status_code=404, detail="Audio not available")
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+        "Content-Type": "audio/mp4",
+        "Content-Disposition": "inline",
+    }
+    return StreamingResponse(iter([]), status_code=200, headers=headers)
+
+
 @api.get("/audio/{video_id}")
 async def audio_proxy(video_id: str, request: Request):
     """
-    Audio məzmununu proxy ilə ötürür.
-    - HTTP Range request-lərini tam dəstəkləyir (iOS lock screen üçün KRİTİK)
-    - Upstream URL expire olarsa (403/410/404), avtomatik refresh + retry
-    - Frontend-dən baxanda URL həmişə eyni stabil endpoint olur
+    Audio mÉzmununu proxy ilÉ Ã¶tÃ¼rÃ¼r.
+    - HTTP Range request-lÉrini tam dÉstÉklÉyir (iOS lock screen Ã¼Ã§Ã¼n KRÄ°TÄ°K)
+    - Upstream URL expire olarsa (403/404/410), avtomatik refresh + retry
+    - Frontend-dÉn baxanda URL hÉmiÅÉ eyni stabil endpoint olur
     """
     range_header = request.headers.get("range")
 
@@ -299,16 +317,12 @@ async def audio_proxy(video_id: str, request: Request):
     try:
         upstream_client, resp = await _open_upstream(upstream_url, range_header)
 
-        # Expired upstream — refresh + retry bir dəfə
+        # Expired upstream â refresh + retry bir dÉfÉ
         if resp.status_code in (403, 404, 410):
-            try:
-                await resp.aclose()
-            except Exception:
-                pass
-            try:
-                await upstream_client.aclose()
-            except Exception:
-                pass
+            try: await resp.aclose()
+            except Exception: pass
+            try: await upstream_client.aclose()
+            except Exception: pass
             data = await _resolve_stream(video_id, force=True)
             if not data or not data.get("stream_url"):
                 raise HTTPException(status_code=404, detail="Audio re-fetch failed")
@@ -343,6 +357,7 @@ async def audio_proxy(video_id: str, request: Request):
     pass_headers.setdefault("Accept-Ranges", "bytes")
     pass_headers.setdefault("Cache-Control", "no-store")
     pass_headers.setdefault("Content-Type", "audio/mp4")
+    pass_headers.setdefault("Content-Disposition", "inline")
 
     return StreamingResponse(
         _body(),
@@ -352,7 +367,7 @@ async def audio_proxy(video_id: str, request: Request):
     )
 
 
-# FIX: Mahnı bitəndə fərdi tövsiyələr verir (YouTube tərzi)
+# FIX: MahnÄ± bitÉndÉ fÉrdi tÃ¶vsiyÉlÉr verir (YouTube tÉrzi)
 @api.get("/recommendations/{video_id}")
 async def recommendations(video_id: str, session_id: Optional[str] = None):
     try:
@@ -362,7 +377,7 @@ async def recommendations(video_id: str, session_id: Optional[str] = None):
             if recent:
                 artists = [r["artist"] for r in recent if r["artist"] != "Unknown artist"]
                 if artists:
-                    query = f"{artists[0]} oxşar mahnılar"
+                    query = f"{artists[0]} oxÅar mahnÄ±lar"
 
         results = await yt_search(query, limit=20)
         results = [r for r in results if r["id"] != video_id]
@@ -437,7 +452,7 @@ async def trending(limit: int = 20):
 
 
 # ---- Featured (Azerbaijani TOP) ----
-AZ_ARTIST_QUERIES = ["Miri Yusif", "Aygün Kazımova", "Çakal rap", "Alizade Azerbaijan", "Lvbel C5"]
+AZ_ARTIST_QUERIES = ["Miri Yusif", "AygÃ¼n KazÄ±mova", "Ãakal rap", "Alizade Azerbaijan", "Lvbel C5"]
 AZ_TOP_QUERIES = ["azerbaijan top mahnilar 2025", "azeri top music 2025", "azerbaycan yeni mahnilar", "azeri hit mahnilar"]
 FEATURED_QUERIES = AZ_TOP_QUERIES + AZ_ARTIST_QUERIES + ["azeri pop 2025", "azeri rap 2025", "azerbaycan rep", "Turkish Azeri hits"]
 
@@ -468,7 +483,7 @@ async def home_bootstrap(session_id: Optional[str] = None):
         recent = await db.recently_played.find({"session_id": session_id}).sort("played_at", -1).to_list(5)
         if len(recent) >= 3:
             fav_artist = recent[0]["artist"]
-            query_discovery = f"{fav_artist} oxşar hitlər"
+            query_discovery = f"{fav_artist} oxÅar hitlÉr"
 
     top_task = asyncio.create_task(yt_search(query_top, limit=15, ttl=_CACHE_TTL_FEATURED))
     artists_task = asyncio.create_task(yt_search(AZ_ARTIST_QUERIES[0], limit=15, ttl=_CACHE_TTL_FEATURED))
