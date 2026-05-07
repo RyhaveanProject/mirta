@@ -1,5 +1,3 @@
-
-📄 .github/workflows/ios-build.yml (TAM FİNAL)
 name: Build iOS Unsigned IPA (Scarlet/Sideloadly Compatible)
 
 on:
