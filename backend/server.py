@@ -212,14 +212,14 @@ async def _increment_play(video_id, data):
 @api.get("/stream/{video_id}")
 async def stream_meta(video_id: str, request: Request):
     """
-    Frontend bu endpoint-i çağırır. `stream_url` olaraq öz proxy URL-imizi
-    qaytarırıq — beləliklə audio element həmişə eyni stabil URL ilə işləyir,
-    arxa planda Range request-lərində googlevideo expired URL-ləri ilə
-    qarşılaşmır. Bu, iOS lock screen / background playback üçün kritikdir.
+    Frontend bu endpoint-i Ã§aÄÄ±rÄ±r. `stream_url` olaraq Ã¶z proxy URL-imizi
+    qaytarÄ±rÄ±q â belÉliklÉ audio element hÉmiÅÉ eyni stabil URL ilÉ iÅlÉyir,
+    arxa planda Range request-lÉrindÉ googlevideo expired URL-lÉri ilÉ
+    qarÅÄ±laÅmÄ±r. Bu, iOS lock screen / background playback Ã¼Ã§Ã¼n kritikdir.
     """
     data = await _resolve_stream(video_id)
     if not data:
-        # Sadəcə metadata fallback (arayışla)
+        # SadÉcÉ metadata fallback (arayÄ±Åla)
         try:
             rs = await yt_search(video_id, limit=1, cache=False)
             if rs:
@@ -252,7 +252,7 @@ async def stream_meta(video_id: str, request: Request):
     }
 
 
-# Köhnə endpoint geriyə uyğunluq üçün saxlanılır
+# KÃ¶hnÉ endpoint geriyÉ uyÄunluq Ã¼Ã§Ã¼n saxlanÄ±lÄ±r
 @api.get("/stream-info/{video_id}")
 async def stream_info(video_id: str, request: Request):
     return await stream_meta(video_id, request)
@@ -282,10 +282,10 @@ async def _open_upstream(url: str, range_header: Optional[str]):
 @api.get("/audio/{video_id}")
 async def audio_proxy(video_id: str, request: Request):
     """
-    Audio məzmununu proxy ilə ötürür.
-    - HTTP Range request-lərini tam dəstəkləyir (iOS lock screen üçün KRİTİK)
+    Audio mÉzmununu proxy ilÉ Ã¶tÃ¼rÃ¼r.
+    - HTTP Range request-lÉrini tam dÉstÉklÉyir (iOS lock screen Ã¼Ã§Ã¼n KRÄ°TÄ°K)
     - Upstream URL expire olarsa (403/410/404), avtomatik refresh + retry
-    - Frontend-dən baxanda URL həmişə eyni stabil endpoint olur
+    - Frontend-dÉn baxanda URL hÉmiÅÉ eyni stabil endpoint olur
     """
     range_header = request.headers.get("range")
 
@@ -299,7 +299,7 @@ async def audio_proxy(video_id: str, request: Request):
     try:
         upstream_client, resp = await _open_upstream(upstream_url, range_header)
 
-        # Expired upstream — refresh + retry bir dəfə
+        # Expired upstream â refresh + retry bir dÉfÉ
         if resp.status_code in (403, 404, 410):
             try:
                 await resp.aclose()
@@ -352,7 +352,7 @@ async def audio_proxy(video_id: str, request: Request):
     )
 
 
-# FIX: Mahnı bitəndə fərdi tövsiyələr verir (YouTube tərzi)
+# FIX: MahnÄ± bitÉndÉ fÉrdi tÃ¶vsiyÉlÉr verir (YouTube tÉrzi)
 @api.get("/recommendations/{video_id}")
 async def recommendations(video_id: str, session_id: Optional[str] = None):
     try:
@@ -362,7 +362,7 @@ async def recommendations(video_id: str, session_id: Optional[str] = None):
             if recent:
                 artists = [r["artist"] for r in recent if r["artist"] != "Unknown artist"]
                 if artists:
-                    query = f"{artists[0]} oxşar mahnılar"
+                    query = f"{artists[0]} oxÅar mahnÄ±lar"
 
         results = await yt_search(query, limit=20)
         results = [r for r in results if r["id"] != video_id]
@@ -437,7 +437,7 @@ async def trending(limit: int = 20):
 
 
 # ---- Featured (Azerbaijani TOP) ----
-AZ_ARTIST_QUERIES = ["Miri Yusif", "Aygün Kazımova", "Çakal rap", "Alizade Azerbaijan", "Lvbel C5"]
+AZ_ARTIST_QUERIES = ["Miri Yusif", "AygÃ¼n KazÄ±mova", "Ãakal rap", "Alizade Azerbaijan", "Lvbel C5"]
 AZ_TOP_QUERIES = ["azerbaijan top mahnilar 2025", "azeri top music 2025", "azerbaycan yeni mahnilar", "azeri hit mahnilar"]
 FEATURED_QUERIES = AZ_TOP_QUERIES + AZ_ARTIST_QUERIES + ["azeri pop 2025", "azeri rap 2025", "azerbaycan rep", "Turkish Azeri hits"]
 
@@ -468,7 +468,7 @@ async def home_bootstrap(session_id: Optional[str] = None):
         recent = await db.recently_played.find({"session_id": session_id}).sort("played_at", -1).to_list(5)
         if len(recent) >= 3:
             fav_artist = recent[0]["artist"]
-            query_discovery = f"{fav_artist} oxşar hitlər"
+            query_discovery = f"{fav_artist} oxÅar hitlÉr"
 
     top_task = asyncio.create_task(yt_search(query_top, limit=15, ttl=_CACHE_TTL_FEATURED))
     artists_task = asyncio.create_task(yt_search(AZ_ARTIST_QUERIES[0], limit=15, ttl=_CACHE_TTL_FEATURED))
