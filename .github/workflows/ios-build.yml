@@ -1,45 +1,35 @@
-name: Build iOS IPA (Scarlet 1.0 Compatible - ULTIMATE)
+name: Build iOS IPA (Scarlet Enterprise v3)
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   build:
-    name: Build Scarlet-compatible IPA
     runs-on: macos-14
     timeout-minutes: 60
     defaults:
       run:
         working-directory: frontend
-
     env:
       APP_NAME: Ryhavean
       BUNDLE_ID: com.ryhavean.spotify
       DEPLOYMENT_TARGET: "13.0"
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 18.20.4
-
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
       - name: Install ldid
-        shell: bash
         run: brew install ldid || true
 
-      - name: Install JS dependencies
-        shell: bash
+      - name: Install JS deps
         run: |
           set -e
           export NODE_OPTIONS="--max_old_space_size=4096 --openssl-legacy-provider"
@@ -47,8 +37,7 @@ jobs:
           if ! command -v yarn >/dev/null 2>&1; then npm install -g yarn --force; fi
           yarn install --network-timeout 600000 --ignore-engines
 
-      - name: Build React web app
-        shell: bash
+      - name: Build React
         run: |
           set -e
           export NODE_OPTIONS="--max_old_space_size=4096 --openssl-legacy-provider"
@@ -59,12 +48,12 @@ jobs:
           EOF
           CI=false yarn build
 
-      - name: Add iOS native project
+      - name: Add iOS native (Capacitor)
         run: |
           if [ ! -d "ios" ]; then npx cap add ios; fi
           npx cap sync ios
 
-      - name: Setup AppIcon.appiconset
+      - name: Setup AppIcon
         shell: bash
         run: |
           set -e
@@ -137,7 +126,7 @@ jobs:
             sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]*;/PRODUCT_BUNDLE_IDENTIFIER = ${BUNDLE_ID};/g" "$PROJ" || true
           fi
 
-      - name: Patch AppDelegate.swift
+      - name: Patch AppDelegate (audio bg)
         shell: bash
         run: |
           python3 - <<'PY'
@@ -154,54 +143,148 @@ jobs:
           p.write_text(src)
           PY
 
-      - name: Fix Info.plist
+      - name: "⭐ Rewrite Info.plist (clean XML, Scarlet-friendly)"
         shell: bash
         run: |
           set -e
           PLIST="ios/App/App/Info.plist"
-          PB=/usr/libexec/PlistBuddy
-          $PB -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST"
-          $PB -c "Set :CFBundleName ${APP_NAME}" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleName string ${APP_NAME}" "$PLIST"
-          $PB -c "Set :CFBundleExecutable App" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleExecutable string App" "$PLIST"
-          $PB -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleIdentifier string ${BUNDLE_ID}" "$PLIST"
-          $PB -c "Set :CFBundleShortVersionString 1.0.0" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleShortVersionString string 1.0.0" "$PLIST"
-          $PB -c "Set :CFBundleVersion 1" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleVersion string 1" "$PLIST"
-          $PB -c "Set :CFBundlePackageType APPL" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundlePackageType string APPL" "$PLIST"
-          $PB -c "Set :LSRequiresIPhoneOS true" "$PLIST" 2>/dev/null || $PB -c "Add :LSRequiresIPhoneOS bool true" "$PLIST"
-          $PB -c "Set :MinimumOSVersion ${DEPLOYMENT_TARGET}" "$PLIST" 2>/dev/null || $PB -c "Add :MinimumOSVersion string ${DEPLOYMENT_TARGET}" "$PLIST"
-          $PB -c "Set :DTPlatformName iphoneos" "$PLIST" 2>/dev/null || $PB -c "Add :DTPlatformName string iphoneos" "$PLIST"
-          $PB -c "Delete :CFBundleSupportedPlatforms" "$PLIST" 2>/dev/null || true
-          $PB -c "Add :CFBundleSupportedPlatforms array" "$PLIST"
-          $PB -c "Add :CFBundleSupportedPlatforms:0 string iPhoneOS" "$PLIST"
-          $PB -c "Set :CFBundleIconName AppIcon" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleIconName string AppIcon" "$PLIST"
-          $PB -c "Delete :CFBundleIcons" "$PLIST" 2>/dev/null || true
-          $PB -c "Add :CFBundleIcons dict" "$PLIST"
-          $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon dict" "$PLIST"
-          $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName string AppIcon" "$PLIST"
-          $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles array" "$PLIST"
-          $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:0 string AppIcon60x60" "$PLIST"
-          $PB -c "Add :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:1 string AppIcon76x76" "$PLIST"
-          $PB -c "Delete :UIBackgroundModes" "$PLIST" 2>/dev/null || true
-          $PB -c "Add :UIBackgroundModes array" "$PLIST"
-          $PB -c "Add :UIBackgroundModes:0 string audio" "$PLIST"
-          $PB -c "Add :UIBackgroundModes:1 string fetch" "$PLIST"
-          $PB -c "Delete :NSAppTransportSecurity" "$PLIST" 2>/dev/null || true
-          $PB -c "Add :NSAppTransportSecurity dict" "$PLIST"
-          $PB -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST"
-          $PB -c "Delete :UIDeviceFamily" "$PLIST" 2>/dev/null || true
-          $PB -c "Add :UIDeviceFamily array" "$PLIST"
-          $PB -c "Add :UIDeviceFamily:0 integer 1" "$PLIST"
-          $PB -c "Add :UIDeviceFamily:1 integer 2" "$PLIST"
-          $PB -c "Delete :UISupportedInterfaceOrientations" "$PLIST" 2>/dev/null || true
-          $PB -c "Add :UISupportedInterfaceOrientations array" "$PLIST"
-          $PB -c "Add :UISupportedInterfaceOrientations:0 string UIInterfaceOrientationPortrait" "$PLIST"
-          $PB -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST" 2>/dev/null || $PB -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST"
-          plutil -convert binary1 "$PLIST" || true
+          # Tam yenidən yaz — köhnə formatı təmiz XML ilə əvəz et
+          cat > "$PLIST" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleDisplayName</key>
+            <string>${APP_NAME}</string>
+            <key>CFBundleName</key>
+            <string>${APP_NAME}</string>
+            <key>CFBundleExecutable</key>
+            <string>App</string>
+            <key>CFBundleIdentifier</key>
+            <string>${BUNDLE_ID}</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0.0</string>
+            <key>CFBundleVersion</key>
+            <string>1</string>
+            <key>CFBundleSignature</key>
+            <string>????</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>MinimumOSVersion</key>
+            <string>${DEPLOYMENT_TARGET}</string>
+            <key>DTPlatformName</key>
+            <string>iphoneos</string>
+            <key>CFBundleSupportedPlatforms</key>
+            <array>
+              <string>iPhoneOS</string>
+            </array>
+            <key>CFBundleIconName</key>
+            <string>AppIcon</string>
+            <key>CFBundleIcons</key>
+            <dict>
+              <key>CFBundlePrimaryIcon</key>
+              <dict>
+                <key>CFBundleIconName</key>
+                <string>AppIcon</string>
+                <key>CFBundleIconFiles</key>
+                <array>
+                  <string>AppIcon60x60</string>
+                </array>
+              </dict>
+            </dict>
+            <key>CFBundleIcons~ipad</key>
+            <dict>
+              <key>CFBundlePrimaryIcon</key>
+              <dict>
+                <key>CFBundleIconName</key>
+                <string>AppIcon</string>
+                <key>CFBundleIconFiles</key>
+                <array>
+                  <string>AppIcon60x60</string>
+                  <string>AppIcon76x76</string>
+                </array>
+              </dict>
+            </dict>
+            <key>UIBackgroundModes</key>
+            <array>
+              <string>audio</string>
+              <string>fetch</string>
+            </array>
+            <key>NSAppTransportSecurity</key>
+            <dict>
+              <key>NSAllowsArbitraryLoads</key>
+              <true/>
+            </dict>
+            <key>UIDeviceFamily</key>
+            <array>
+              <integer>1</integer>
+              <integer>2</integer>
+            </array>
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+              <string>UIInterfaceOrientationPortrait</string>
+              <string>UIInterfaceOrientationLandscapeLeft</string>
+              <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+            <key>UISupportedInterfaceOrientations~ipad</key>
+            <array>
+              <string>UIInterfaceOrientationPortrait</string>
+              <string>UIInterfaceOrientationPortraitUpsideDown</string>
+              <string>UIInterfaceOrientationLandscapeLeft</string>
+              <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+            <key>UILaunchStoryboardName</key>
+            <string>LaunchScreen</string>
+            <key>UIMainStoryboardFile</key>
+            <string>Main</string>
+            <key>UIRequiredDeviceCapabilities</key>
+            <array>
+              <string>armv7</string>
+            </array>
+            <key>UIViewControllerBasedStatusBarAppearance</key>
+            <true/>
+            <key>UIStatusBarStyle</key>
+            <string>UIStatusBarStyleLightContent</string>
+            <key>ITSAppUsesNonExemptEncryption</key>
+            <false/>
+            <key>NSCameraUsageDescription</key>
+            <string>Şəkillər üçün kamera icazəsi</string>
+            <key>NSMicrophoneUsageDescription</key>
+            <string>Səs yazısı üçün mikrofon icazəsi</string>
+            <key>NSPhotoLibraryUsageDescription</key>
+            <string>Şəkilləri saxlamaq üçün</string>
+          </dict>
+          </plist>
+          EOF
+          # Validation
+          plutil -lint "$PLIST"
+          echo "✅ Info.plist təmiz XML, validdir"
 
       - name: Install CocoaPods
         run: cd ios/App && pod install --repo-update
 
-      - name: Build Unsigned Archive
+      - name: Create entitlements
+        shell: bash
+        run: |
+          cat > ios/App/App/App.entitlements <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>get-task-allow</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint ios/App/App/App.entitlements
+
+      - name: Build Archive
         shell: bash
         run: |
           set -e
@@ -213,212 +296,168 @@ jobs:
             -destination "generic/platform=iOS" \
             -archivePath "$PWD/build/${APP_NAME}.xcarchive" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
+            CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE_SPECIFIER= \
             ENABLE_BITCODE=NO ARCHS=arm64 \
             IPHONEOS_DEPLOYMENT_TARGET=13.0 \
             archive 2>&1 | tee build.log
 
-      - name: "🔥 SCARLET 1.0 COMPATIBLE SIGNING (FINAL)"
+      - name: Fake-sign with ldid (Scarlet üçün ən stabil)
         shell: bash
         run: |
           set -e
           cd ios/App
-          
           APP_PATH=$(find "build/${APP_NAME}.xcarchive/Products/Applications" -maxdepth 1 -type d -name "*.app" | head -n 1)
-          BINARY="$APP_PATH/App"
-          
-          echo "📍 App: $APP_PATH"
-          echo "📍 Binary: $BINARY"
-          
-          # ============================================
-          # ADIM 1: TÜM İMZALARI TEMİZLE
-          # ============================================
-          echo "=== ADIM 1: İmzalar temizleniyor ==="
-          find "$APP_PATH" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
-          find "$APP_PATH" -name "CodeResources" -delete 2>/dev/null || true
-          find "$APP_PATH" -name "embedded.mobileprovision" -delete 2>/dev/null || true
-          find "$APP_PATH" -name ".DS_Store" -delete 2>/dev/null || true
-          find "$APP_PATH" -name "*.xctest" -type d -exec rm -rf {} + 2>/dev/null || true
-          
-          # Binary'deki LC_CODE_SIGNATURE temizle
-          if [ -f "$BINARY" ]; then
-            python3 -c "
-            import struct, os
-            f = '$BINARY'
-            if os.path.exists(f):
-                with open(f, 'rb') as fh:
-                    data = bytearray(fh.read())
-                magic = struct.unpack_from('<I', data, 0)[0]
-                if magic == 0xFEEDFACF:
-                    ncmds = struct.unpack_from('<I', data, 16)[0]
-                    offset = 32
-                    cleaned = 0
-                    for i in range(ncmds):
-                        if offset + 8 > len(data): break
-                        cmd = struct.unpack_from('<I', data, offset)[0]
-                        cmdsize = struct.unpack_from('<I', data, offset+4)[0]
-                        if cmd == 0x1d:
-                            for j in range(offset, min(offset+cmdsize, len(data))): data[j] = 0
-                            cleaned += 1
-                        elif cmd == 0: break
-                        offset += cmdsize
-                        if offset >= len(data): break
-                    with open(f, 'wb') as fh: fh.write(data)
-                    print(f'Cleaned {cleaned} LC_CODE_SIGNATURE')
-                else:
-                    print(f'Magic: 0x{magic:08x}')
-            " 2>/dev/null || true
-          fi
-          
-          # ============================================
-          # ADIM 2: Entitlements (Scarlet 1.0 dostu)
-          # ============================================
-          echo "=== ADIM 2: Entitlements ==="
-          cat > /tmp/scarlet_ent.xml <<'ENTEOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>get-task-allow</key>
-              <true/>
-              <key>application-identifier</key>
-              <string>AAAAAAAAAA.com.ryhavean.spotify</string>
-              <key>com.apple.developer.team-identifier</key>
-              <string>AAAAAAAAAA</string>
-              <key>keychain-access-groups</key>
-              <array>
-                  <string>AAAAAAAAAA.com.ryhavean.spotify</string>
-              </array>
-          </dict>
-          </plist>
-          ENTEOF
-          
-          # ============================================
-          # ADIM 3: Framework'leri imzala
-          # ============================================
-          echo "=== ADIM 3: Frameworks ==="
-          if [ -d "$APP_PATH/Frameworks" ]; then
-            for fw in "$APP_PATH/Frameworks"/*.framework; do
-              [ -d "$fw" ] || continue
-              fw_binary="$fw/$(basename "$fw" .framework)"
-              if [ -f "$fw_binary" ]; then
-                ldid -S /tmp/scarlet_ent.xml "$fw_binary" 2>/dev/null || true
-                echo "  → $(basename $fw)"
-              fi
-              find "$fw" -name "*.dylib" -type f | while read d; do
-                ldid -S /tmp/scarlet_ent.xml "$d" 2>/dev/null || true
-              done
-            done
-          fi
-          
-          # Diğer dylib'ler
-          find "$APP_PATH" -name "*.dylib" -type f | while read d; do
-            case "$d" in */Frameworks/*) ;; *) 
-              ldid -S /tmp/scarlet_ent.xml "$d" 2>/dev/null || true
-              echo "  → dylib: $(basename $d)"
-              ;;
-            esac
-          done
-          
-          # ============================================
-          # ADIM 4: Ana binary'yi ldid ile imzala
-          # ============================================
-          echo "=== ADIM 4: Ana binary ldid ==="
-          if [ -f "$BINARY" ]; then
-            ldid -S /tmp/scarlet_ent.xml "$BINARY"
-            echo "✅ ldid tamam"
-          else
-            echo "❌ Binary bulunamadı!"
-            ls -la "$APP_PATH/"
-            exit 1
-          fi
-          
-          # ============================================
-          # ADIM 5: codesign (Scarlet 1.0 için yedek)
-          # ============================================
-          echo "=== ADIM 5: codesign ==="
-          codesign --force --sign - --timestamp=none "$APP_PATH" 2>/dev/null && echo "✅ codesign tamam" || echo "⚠️ codesign geçildi"
-          
-          # ============================================
-          # ADIM 6: embedded.mobileprovision
-          # ============================================
-          echo "=== ADIM 6: embedded.mobileprovision ==="
-          cat > "$APP_PATH/embedded.mobileprovision" <<'MPEOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>AppIDName</key>
-              <string>Ryhavean</string>
-              <key>ApplicationIdentifierPrefix</key>
-              <array><string>AAAAAAAAAA</string></array>
-              <key>CreationDate</key>
-              <date>2026-01-01T00:00:00Z</date>
-              <key>DeveloperCertificates</key>
-              <array><data></data></array>
-              <key>Entitlements</key>
-              <dict>
-                  <key>get-task-allow</key>
-                  <true/>
-                  <key>application-identifier</key>
-                  <string>AAAAAAAAAA.com.ryhavean.spotify</string>
-                  <key>keychain-access-groups</key>
-                  <array><string>AAAAAAAAAA.*</string></array>
-              </dict>
-              <key>ExpirationDate</key>
-              <date>2030-01-01T00:00:00Z</date>
-              <key>Name</key>
-              <string>Scarlet Profile</string>
-              <key>ProvisionedDevices</key>
-              <array/>
-              <key>TeamIdentifier</key>
-              <array><string>AAAAAAAAAA</string></array>
-              <key>TimeToLive</key>
-              <integer>0</integer>
-              <key>UUID</key>
-              <string>00000000-0000-0000-0000-000000000000</string>
-              <key>Version</key>
-              <integer>1</integer>
-          </dict>
-          </plist>
-          MPEOF
-          echo "✅ embedded.mobileprovision tamam"
-          
-          echo ""
-          echo "✅ TÜM İMZALAMA TAMAM"
+          ENT="App/App.entitlements"
 
-      - name: Package IPA (Scarlet Optimized)
+          # Bütün köhnə imzaları sil
+          find "$APP_PATH" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
+          find "$APP_PATH" -name "embedded.mobileprovision" -delete 2>/dev/null || true
+
+          # ldid ilə əsas binary-ni və framework-ləri fake-sign et
+          # ldid Scarlet/Sideloadly ilə daha yaxşı işləyir codesign-dan
+          if command -v ldid >/dev/null 2>&1; then
+            echo "🔏 ldid ilə imzalama"
+            # Frameworks
+            if [ -d "$APP_PATH/Frameworks" ]; then
+              find "$APP_PATH/Frameworks" -type f \( -name "*.dylib" -o -path "*/Frameworks/*" -name "*.framework" -prune -o -type f \) -print | while read f; do
+                if file "$f" 2>/dev/null | grep -q "Mach-O"; then
+                  ldid -S "$f" 2>/dev/null || true
+                fi
+              done
+            fi
+            # Əsas binary
+            if [ -f "$APP_PATH/App" ]; then
+              ldid -S"$ENT" "$APP_PATH/App" || ldid -S "$APP_PATH/App"
+            fi
+          else
+            # Fallback: codesign
+            if [ -d "$APP_PATH/Frameworks" ]; then
+              for fw in "$APP_PATH/Frameworks"/*.framework; do
+                [ -d "$fw" ] || continue
+                codesign --force --sign - --timestamp=none "$fw"
+              done
+            fi
+            codesign --force --sign - --timestamp=none --entitlements "$ENT" "$APP_PATH"
+          fi
+
+          # Verify
+          codesign -dv "$APP_PATH" 2>&1 || true
+          echo "✅ Sign tamam"
+
+      - name: "⭐ Package IPA (Enterprise mode + iTunesMetadata)"
         shell: bash
         run: |
           set -e
           cd ios/App
-          
           APP_PATH=$(find "build/${APP_NAME}.xcarchive/Products/Applications" -maxdepth 1 -type d -name "*.app" | head -n 1)
           APP_BASENAME=$(basename "$APP_PATH")
-          
-          echo "=== IPA Paketleme ==="
-          
-          rm -rf build/Payload
-          mkdir -p build/Payload
-          cp -R "$APP_PATH" "build/Payload/"
-          DEST_APP="build/Payload/${APP_BASENAME}"
-          
+
+          rm -rf build/Payload build/IPA_ROOT
+          mkdir -p build/IPA_ROOT/Payload
+          cp -R "$APP_PATH" "build/IPA_ROOT/Payload/"
+
+          DEST_APP="build/IPA_ROOT/Payload/${APP_BASENAME}"
+
+          # Lazımsız faylları sil
           find "$DEST_APP" -name ".DS_Store" -delete 2>/dev/null || true
-          
-          echo "BundleID: $(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' ${DEST_APP}/Info.plist 2>/dev/null)"
-          
-          cd build
-          rm -f "${APP_NAME}.ipa"
-          zip -qry -X "${APP_NAME}.ipa" Payload
-          rm -rf Payload
-          
+          find "$DEST_APP" -name "__MACOSX" -exec rm -rf {} + 2>/dev/null || true
+
+          # ⭐ iTunesMetadata.plist — Scarlet Enterprise mode bunu axtarır
+          cat > build/IPA_ROOT/iTunesMetadata.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>artistName</key>
+              <string>Ryhavean</string>
+              <key>bundleDisplayName</key>
+              <string>${APP_NAME}</string>
+              <key>bundleShortVersionString</key>
+              <string>1.0.0</string>
+              <key>bundleVersion</key>
+              <string>1</string>
+              <key>copyright</key>
+              <string>© 2026 Ryhavean</string>
+              <key>fileExtension</key>
+              <string>.ipa</string>
+              <key>genre</key>
+              <string>Music</string>
+              <key>genreId</key>
+              <integer>6011</integer>
+              <key>itemId</key>
+              <integer>0</integer>
+              <key>itemName</key>
+              <string>${APP_NAME}</string>
+              <key>kind</key>
+              <string>software</string>
+              <key>playlistArtistName</key>
+              <string>Ryhavean</string>
+              <key>playlistName</key>
+              <string>${APP_NAME}</string>
+              <key>releaseDate</key>
+              <string>2026-01-01T00:00:00Z</string>
+              <key>softwareIcon57x57URL</key>
+              <string></string>
+              <key>softwareIconNeedsShine</key>
+              <false/>
+              <key>softwareSupportedDeviceIds</key>
+              <array>
+                  <integer>1</integer>
+              </array>
+              <key>softwareVersionBundleId</key>
+              <string>${BUNDLE_ID}</string>
+              <key>softwareVersionExternalIdentifier</key>
+              <integer>1</integer>
+              <key>vendorId</key>
+              <integer>0</integer>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint build/IPA_ROOT/iTunesMetadata.plist
+
+          # ⭐ iTunesArtwork — 512x512 icon (köhnə App Store IPA tələbi)
+          if [ -f "public/../public/ios-icons/AppIcon-1024.png" ]; then
+            cp "public/../public/ios-icons/AppIcon-1024.png" build/IPA_ROOT/iTunesArtwork || true
+          fi
+          # public/ frontend altındadır:
+          if [ -f "../../public/ios-icons/AppIcon-1024.png" ]; then
+            cp "../../public/ios-icons/AppIcon-1024.png" build/IPA_ROOT/iTunesArtwork
+          fi
+          # daha sadə yol:
+          ICON_1024="$GITHUB_WORKSPACE/frontend/public/ios-icons/AppIcon-1024.png"
+          if [ -f "$ICON_1024" ]; then
+            cp "$ICON_1024" build/IPA_ROOT/iTunesArtwork
+            cp "$ICON_1024" build/IPA_ROOT/iTunesArtwork@2x
+            echo "✅ iTunesArtwork əlavə edildi"
+          fi
+
+          # Bundle adını doğrula
+          PB=/usr/libexec/PlistBuddy
+          DN=$($PB -c 'Print :CFBundleDisplayName' "${DEST_APP}/Info.plist")
+          BN=$($PB -c 'Print :CFBundleName' "${DEST_APP}/Info.plist")
+          echo "🏷  Display='${DN}'  Name='${BN}'"
+          if [ "$DN" != "${APP_NAME}" ] || [ "$BN" != "${APP_NAME}" ]; then
+            echo "::error::Bundle adları yanlışdır"
+            exit 1
+          fi
+
+          # ZIP — Payload, iTunesMetadata.plist, iTunesArtwork hamısı root-da
+          cd build/IPA_ROOT
+          rm -f "../${APP_NAME}.ipa"
+          # -X: macOS metadata sil
+          # -y: simlinks
+          zip -qry -X "../${APP_NAME}.ipa" .
+          cd ..
+          rm -rf IPA_ROOT
+
           echo "✅ IPA: $(du -h ${APP_NAME}.ipa | cut -f1)"
-          
-          # Doğrulama
-          echo "=== Doğrulama ==="
-          unzip -l "${APP_NAME}.ipa" | head -15
-          unzip -l "${APP_NAME}.ipa" | grep -q "embedded.mobileprovision" && echo "✅ mobileprovision var" || echo "⚠️ mobileprovision yok"
+
+          # Final yoxlama
+          unzip -l "${APP_NAME}.ipa" | head -30
+          unzip -l "${APP_NAME}.ipa" | grep -q "iTunesMetadata.plist" && echo "✅ iTunesMetadata.plist var" || echo "::warning::iTunesMetadata.plist yoxdur"
+          unzip -l "${APP_NAME}.ipa" | grep -q "Payload/.*\.app/Info.plist" && echo "✅ Info.plist var" || { echo "::error::Info.plist yox"; exit 1; }
+          unzip -l "${APP_NAME}.ipa" | grep -q "Frameworks/Capacitor.framework" && echo "✅ Capacitor.framework var" || { echo "::error::Capacitor yox"; exit 1; }
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
@@ -427,9 +466,10 @@ jobs:
           path: frontend/ios/App/build/Ryhavean.ipa
           retention-days: 30
 
-      - name: Upload build log on failure
-        if: failure()
+      - name: Upload build log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: frontend/ios/App/build.log
+          retention-days: 7
