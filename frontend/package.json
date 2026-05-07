@@ -29,5 +29,18 @@
   "browserslist": {
     "production": [">0.2%", "not dead", "not op_mini all"],
     "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
+  },
+  "resolutions": {
+    "fork-ts-checker-webpack-plugin/**/ajv": "^6.12.6",
+    "fork-ts-checker-webpack-plugin/**/ajv-keywords": "^3.5.2",
+    "fork-ts-checker-webpack-plugin/**/schema-utils": "^3.1.2"
+  },
+  "overrides": {
+    "fork-ts-checker-webpack-plugin": {
+      "schema-utils": {
+        "ajv": "^6.12.6",
+        "ajv-keywords": "^3.5.2"
+      }
+    }
   }
 }
