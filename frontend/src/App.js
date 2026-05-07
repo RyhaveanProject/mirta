@@ -6,7 +6,8 @@ import {
   Home as HomeIcon, Search as SearchIcon, Heart, Music2,
   Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1,
   ChevronDown, Volume2, ListMusic, Plus, MoreHorizontal,
-  Loader2, TrendingUp, Sparkles, Clock, X, Eye
+  Loader2, TrendingUp, Sparkles, Clock, X, Eye,
+  Headphones, Radio, Zap, ArrowRight
 } from "lucide-react";
 
 // --- FIREBASE IMPORTLARI ---
@@ -582,7 +583,7 @@ const HomePage = ({ player, toggleFav, isFav }) => {
 
   return (
     <div className="page" data-testid="home-page">
-     <h1 className="page-title vip-title"></h1>
+     <h1 className="page-title vip-title">Premium Music</h1>
       <div className="page-sub vip-subtitle">My Channel : @rveanx</div>
 
       {recent.length > 0 && (
@@ -974,13 +975,81 @@ const BottomNav = ({ tab, setTab }) => {
   );
 };
 
+/* ---------- PREMIUM WELCOME / GİRİŞ EKRANI ---------- */
+const WelcomeScreen = ({ onEnter }) => {
+  const [leaving, setLeaving] = useState(false);
+  const handle = () => {
+    setLeaving(true);
+    setTimeout(() => onEnter(), 480);
+  };
+  return (
+    <div className={`welcome-screen ${leaving ? "leaving" : ""}`} data-testid="welcome-screen">
+      <div className="welcome-orb o1" />
+      <div className="welcome-orb o2" />
+      <div className="welcome-orb o3" />
+      <div className="welcome-grid" />
+
+      <div className="welcome-top">
+        <div className="welcome-brand">
+          <span className="logo-pulse" />
+          Raven
+        </div>
+        <div className="welcome-badge">
+          <Sparkles size={11} /> Premium
+        </div>
+      </div>
+
+      <div className="welcome-center">
+        <div className="welcome-disc" aria-hidden="true">
+          <div className="welcome-disc-inner" />
+        </div>
+        <div className="welcome-text">
+          <h1 className="welcome-title">
+            Studio quality.
+            <span className="accent-line">Saf səs.</span>
+          </h1>
+          <p className="welcome-sub">
+            Azərbaycanın ən yaxşı mahnıları — premium, reklamsız və limitsiz dinləmə təcrübəsi.
+          </p>
+        </div>
+      </div>
+
+      <div className="welcome-bottom">
+        <div className="welcome-features">
+          <div className="welcome-feature"><Headphones size={13} /> HD Audio</div>
+          <div className="welcome-feature"><Radio size={13} /> Canlı Top</div>
+          <div className="welcome-feature"><Zap size={13} /> Background</div>
+        </div>
+        <button className="welcome-btn" onClick={handle} data-testid="welcome-enter-btn">
+          Daxil Ol <ArrowRight size={18} />
+        </button>
+        <div className="welcome-foot">
+          By <span className="gold">Ryhavean</span> · @rveanx
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function App() {
   const toast = useToast();
   const player = usePlayer(toast);
   const [tab, setTab] = useState("home");
   const [favs, setFavs] = useState([]);
   const [likePending, setLikePending] = useState({});
+  const [showWelcome, setShowWelcome] = useState(() => {
+    try {
+      return !localStorage.getItem("ryhavean_welcomed_v2");
+    } catch {
+      return true;
+    }
+  });
   useDynamicBg(player.current);
+
+  const dismissWelcome = useCallback(() => {
+    try { localStorage.setItem("ryhavean_welcomed_v2", "1"); } catch {}
+    setShowWelcome(false);
+  }, []);
 
   const refreshFavs = useCallback(() => {
     axios.get(`${API}/favorites?session_id=${player.sessionId}`)
@@ -1055,6 +1124,7 @@ function App() {
       <BottomNav tab={tab} setTab={setTab} />
       {player.fullOpen && <FullPlayer player={player} toggleFav={toggleFav} isFav={isFav} />}
       {toast.node}
+      {showWelcome && <WelcomeScreen onEnter={dismissWelcome} />}
     </div>
   );
 }
