@@ -87,7 +87,7 @@ jobs:
             exit 1
           fi
 
-          # Mövcud post_install bloku varsa silirik və yenisini əlavə edirik
+          # Mövcud post_install bloku varsa silirik
           python3 - <<'PY'
           import re, pathlib
           p = pathlib.Path("ios/App/Podfile")
@@ -120,12 +120,71 @@ jobs:
           set -e
           PROJ="ios/App/App.xcodeproj/project.pbxproj"
           if [ -f "$PROJ" ]; then
+            # iOS deployment target-i 13.0-a salaq, geniş uyğunluq üçün
             sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/g' "$PROJ"
+            # Code signing-i app target üçün də söndürək
             sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' "$PROJ" || true
             sed -i '' 's/CODE_SIGN_IDENTITY = "[^"]*";/CODE_SIGN_IDENTITY = "";/g' "$PROJ" || true
             sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]*;/DEVELOPMENT_TEAM = "";/g' "$PROJ" || true
             sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = "[^"]*";/PROVISIONING_PROFILE_SPECIFIER = "";/g' "$PROJ" || true
           fi
+
+      - name: Patch AppDelegate.swift (enable background audio playback)
+        shell: bash
+        run: |
+          set -e
+          APP_DELEGATE="ios/App/App/AppDelegate.swift"
+          if [ ! -f "$APP_DELEGATE" ]; then
+            echo "::error::AppDelegate.swift tapılmadı: $APP_DELEGATE"
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("ios/App/App/AppDelegate.swift")
+          src = p.read_text()
+
+          # 1) AVFoundation import əlavə et (yoxdursa)
+          if "import AVFoundation" not in src:
+              src = re.sub(r"(import UIKit\s*\n)", r"\1import AVFoundation\n", src, count=1)
+
+          # 2) didFinishLaunchingWithOptions daxilinə AVAudioSession konfiqurasiyası əlavə et
+          if "AVAudioSession.sharedInstance()" not in src:
+              audio_block = (
+                  "        // RyAudioManager: arxa plan / kilid ekranında musiqi davam etsin\n"
+                  "        do {\n"
+                  "            let session = AVAudioSession.sharedInstance()\n"
+                  "            try session.setCategory(.playback, mode: .default, options: [])\n"
+                  "            try session.setActive(true)\n"
+                  "        } catch {\n"
+                  "            print(\"[Ryhavean] AudioSession setup error: \\(error)\")\n"
+                  "        }\n"
+              )
+              # didFinishLaunchingWithOptions metodunun açılış mötərizəsindən sonra inject edirik
+              pattern = r"(func application\([^)]*didFinishLaunchingWithOptions[^{]*\{\s*\n)"
+              new_src, n = re.subn(pattern, r"\1" + audio_block, src, count=1)
+              if n == 0:
+                  print("::warning::didFinishLaunchingWithOptions tapılmadı, AudioSession əlavə olunmadı")
+              else:
+                  src = new_src
+
+          # 3) App arxa plana keçəndə də audio session aktiv qalsın
+          if "applicationDidEnterBackground" in src and "session.setActive(true)" not in src.split("applicationDidEnterBackground")[1][:500]:
+              # Mövcud applicationDidEnterBackground metodunun gövdəsinə əlavə et
+              bg_pattern = r"(func applicationDidEnterBackground\([^)]*\)[^{]*\{\s*\n)"
+              bg_block = (
+                  "        do {\n"
+                  "            try AVAudioSession.sharedInstance().setActive(true)\n"
+                  "        } catch {\n"
+                  "            print(\"[Ryhavean] BG AudioSession error: \\(error)\")\n"
+                  "        }\n"
+              )
+              src = re.sub(bg_pattern, r"\1" + bg_block, src, count=1)
+
+          p.write_text(src)
+          print("===== Yenilənmiş AppDelegate.swift =====")
+          print(src)
+          PY
 
       - name: Fix Info.plist (Bundle ID, MinimumOSVersion, Background modes)
         shell: bash
@@ -139,32 +198,40 @@ jobs:
 
           PB=/usr/libexec/PlistBuddy
 
+          # Display Name
           $PB -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" 2>/dev/null || \
             $PB -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST"
 
+          # Bundle Identifier (capacitor.config ilə uyğun olmalıdır)
           $PB -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$PLIST" 2>/dev/null || \
             $PB -c "Add :CFBundleIdentifier string ${BUNDLE_ID}" "$PLIST"
 
+          # Versiya
           $PB -c "Set :CFBundleShortVersionString 1.0.0" "$PLIST" 2>/dev/null || \
             $PB -c "Add :CFBundleShortVersionString string 1.0.0" "$PLIST"
           $PB -c "Set :CFBundleVersion 1" "$PLIST" 2>/dev/null || \
             $PB -c "Add :CFBundleVersion string 1" "$PLIST"
 
+          # MinimumOSVersion - ən geniş uyğunluq üçün
           $PB -c "Set :MinimumOSVersion ${DEPLOYMENT_TARGET}" "$PLIST" 2>/dev/null || \
             $PB -c "Add :MinimumOSVersion string ${DEPLOYMENT_TARGET}" "$PLIST"
 
+          # Background modes (audio + fetch)
           $PB -c "Delete :UIBackgroundModes" "$PLIST" 2>/dev/null || true
           $PB -c "Add :UIBackgroundModes array" "$PLIST"
           $PB -c "Add :UIBackgroundModes:0 string audio" "$PLIST"
           $PB -c "Add :UIBackgroundModes:1 string fetch" "$PLIST"
 
+          # ATS (HTTP-yə icazə) - bəzi backend-lər üçün
           $PB -c "Delete :NSAppTransportSecurity" "$PLIST" 2>/dev/null || true
           $PB -c "Add :NSAppTransportSecurity dict" "$PLIST"
           $PB -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST"
 
+          # UIRequiresFullScreen - bəzi sideload mühitlərində problemləri həll edir
           $PB -c "Set :UIRequiresFullScreen true" "$PLIST" 2>/dev/null || \
             $PB -c "Add :UIRequiresFullScreen bool true" "$PLIST"
 
+          # Encryption export compliance (Apple xəbərdarlığını söndürür)
           $PB -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST" 2>/dev/null || \
             $PB -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST"
 
@@ -186,6 +253,7 @@ jobs:
           set -o pipefail
           cd ios/App
 
+          # Xcpretty-nin yolunu tap
           XCPRETTY=$(command -v xcpretty || echo "")
 
           XCBUILD_CMD=(xcodebuild
@@ -214,6 +282,7 @@ jobs:
             "${XCBUILD_CMD[@]}" | tee build.log
           fi
 
+          # Archive uğurlu olmasını yoxla
           if [ ! -d "build/${APP_NAME}.xcarchive/Products/Applications" ]; then
             echo "::error::Archive yaradılmadı və ya pozulub"
             tail -100 build.log || true
@@ -239,6 +308,7 @@ jobs:
           APP_BASENAME=$(basename "$APP_PATH")
           echo "📦 Tapılan .app: $APP_BASENAME"
 
+          # Payload qovluğunu hazırla
           rm -rf build/Payload
           mkdir -p build/Payload
           cp -R "$APP_PATH" "build/Payload/"
@@ -246,12 +316,16 @@ jobs:
           DEST_APP="build/Payload/${APP_BASENAME}"
 
           # Sideloadly/Scarlet üçün təmizlik:
+          # 1. Mövcud kod imzasını sil (Scarlet öz imzasını qoyacaq)
           rm -rf "${DEST_APP}/_CodeSignature"
+          # 2. Provisioning profili sil
           rm -f "${DEST_APP}/embedded.mobileprovision"
+          # 3. Frameworks daxilindəki imzaları da sil
           if [ -d "${DEST_APP}/Frameworks" ]; then
             find "${DEST_APP}/Frameworks" -type d -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
             find "${DEST_APP}/Frameworks" -type f -name "embedded.mobileprovision" -delete 2>/dev/null || true
           fi
+          # 4. PlugIns və Watch app-ları daxilindəki imzalar
           for sub in PlugIns Watch; do
             if [ -d "${DEST_APP}/${sub}" ]; then
               find "${DEST_APP}/${sub}" -type d -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
@@ -259,6 +333,7 @@ jobs:
             fi
           done
 
+          # Sanity check: .app ölçüsü minimum olmalı (Capacitor app təxminən 8MB+ olur)
           APP_SIZE_KB=$(du -sk "${DEST_APP}" | cut -f1)
           APP_SIZE_MB=$((APP_SIZE_KB / 1024))
           echo "📏 .app ölçüsü: ${APP_SIZE_MB} MB (${APP_SIZE_KB} KB)"
@@ -272,12 +347,19 @@ jobs:
             echo "::warning::.app daxilində Frameworks qovluğu yoxdur!"
           fi
 
+          if [ -d "${DEST_APP}/public" ] || [ -d "${DEST_APP}/App.app/public" ]; then
+            echo "🌐 Web assets mövcuddur ✅"
+          else
+            echo "::warning::Web assets (public/) tapılmadı, baxış lazımdır"
+          fi
+
           if [ "$APP_SIZE_KB" -lt 3000 ]; then
             echo "::error::.app bundle çox kiçikdir (${APP_SIZE_KB} KB). Build natamamdır."
             echo "Bu adətən Frameworks-in embed olunmaması deməkdir."
             exit 1
           fi
 
+          # IPA-nı yığ
           cd build
           rm -f "${APP_NAME}-unsigned.ipa"
           zip -qry "${APP_NAME}-unsigned.ipa" Payload
