@@ -1,4 +1,4 @@
-name: Build iOS Unsigned IPA
+name: Build iOS Unsigned IPA (Scarlet/Sideloadly Compatible)
 
 on:
   workflow_dispatch:
@@ -15,6 +15,11 @@ jobs:
       run:
         working-directory: frontend
 
+    env:
+      APP_NAME: Ryhavean
+      BUNDLE_ID: com.ryhavean.spotify
+      DEPLOYMENT_TARGET: "13.0"
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -22,88 +27,282 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18 # Ən stabil "Legacy" dəstəkli versiya
+          node-version: 20
 
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
-      - name: Install JS dependencies
+      - name: Setup Ruby & install xcpretty
         run: |
-          # Bütün köhnə qalıqları silib təzədən təmiz install edirik
+          sudo gem install xcpretty --no-document || gem install xcpretty --user-install --no-document
+
+      - name: Install JS dependencies
+        shell: bash
+        run: |
+          set -e
           rm -rf node_modules package-lock.json
           npm install --legacy-peer-deps
 
       - name: Build React web app
+        shell: bash
         run: |
-          # Yaddaş limitini artırırıq və OpenSSL problemini həll edirik
+          set -e
+          set -o pipefail
           export NODE_OPTIONS="--max_old_space_size=4096 --openssl-legacy-provider"
-          
+
           cat > .env.production <<EOF
           REACT_APP_BACKEND_URL=https://ryhavean-spotify-backend.onrender.com
           GENERATE_SOURCEMAP=false
           EOF
-          
-          # Hər hansı kiçik xətanın build-i dayandırmaması üçün CI=false
-          # Və bəzi mühitlərdə build zamanı yaranan yaddaş xətası üçün:
-          CI=false npm run build --if-present
+
+          # CI=false - warning-ları fatal etməsin, amma əsl error fatal qalır
+          CI=false npm run build
+
+          # Build-in nəticəsini doğrula
+          if [ ! -d "build" ] || [ -z "$(ls -A build 2>/dev/null)" ]; then
+            echo "::error::React build folder boşdur və ya yoxdur. Build uğursuz oldu."
+            exit 1
+          fi
+          echo "✅ React build hazırdır:"
+          du -sh build/
 
       - name: Add iOS native project (Capacitor)
+        shell: bash
         run: |
-          npx cap add ios || npx cap sync ios
+          set -e
+          if [ ! -d "ios" ]; then
+            npx cap add ios
+          fi
           npx cap sync ios
 
-      - name: Fix Info.plist & Bundle Configuration
+      - name: Patch Podfile (disable signing for all Pods)
+        shell: bash
+        run: |
+          set -e
+          PODFILE="ios/App/Podfile"
+          if [ ! -f "$PODFILE" ]; then
+            echo "::error::Podfile tapılmadı: $PODFILE"
+            exit 1
+          fi
+
+          # Mövcud post_install bloku varsa silirik və yenisini əlavə edirik
+          python3 - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("ios/App/Podfile")
+          src = p.read_text()
+          # Existing post_install bloku təmizlə
+          src = re.sub(r"post_install\s+do\s+\|installer\|.*?end\s*", "", src, flags=re.DOTALL)
+          patch = """
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              target.build_configurations.each do |config|
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+                config.build_settings['CODE_SIGN_IDENTITY'] = ''
+                config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
+                config.build_settings['ENABLE_BITCODE'] = 'NO'
+                config.build_settings['ONLY_ACTIVE_ARCH'] = 'NO'
+                config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
+              end
+            end
+          end
+          """
+          p.write_text(src.rstrip() + "\n\n" + patch.strip() + "\n")
+          print(p.read_text())
+          PY
+
+      - name: Patch project.pbxproj (deployment target & disable signing)
+        shell: bash
+        run: |
+          set -e
+          PROJ="ios/App/App.xcodeproj/project.pbxproj"
+          if [ -f "$PROJ" ]; then
+            sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/g' "$PROJ"
+            sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' "$PROJ" || true
+            sed -i '' 's/CODE_SIGN_IDENTITY = "[^"]*";/CODE_SIGN_IDENTITY = "";/g' "$PROJ" || true
+            sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]*;/DEVELOPMENT_TEAM = "";/g' "$PROJ" || true
+            sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = "[^"]*";/PROVISIONING_PROFILE_SPECIFIER = "";/g' "$PROJ" || true
+          fi
+
+      - name: Fix Info.plist (Bundle ID, MinimumOSVersion, Background modes)
+        shell: bash
         run: |
           set -e
           PLIST="ios/App/App/Info.plist"
-          if [ -f "$PLIST" ]; then
-            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Ryhavean" "$PLIST" 2>/dev/null || \
-              /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Ryhavean" "$PLIST"
-            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.ryhavean.music" "$PLIST" 2>/dev/null || \
-              /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.ryhavean.music" "$PLIST"
-            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 1.0" "$PLIST" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 1" "$PLIST" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$PLIST" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:1 string fetch" "$PLIST" 2>/dev/null || true
+          if [ ! -f "$PLIST" ]; then
+            echo "::error::Info.plist tapılmadı: $PLIST"
+            exit 1
           fi
 
+          PB=/usr/libexec/PlistBuddy
+
+          $PB -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST"
+
+          $PB -c "Set :CFBundleIdentifier ${BUNDLE_ID}" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :CFBundleIdentifier string ${BUNDLE_ID}" "$PLIST"
+
+          $PB -c "Set :CFBundleShortVersionString 1.0.0" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :CFBundleShortVersionString string 1.0.0" "$PLIST"
+          $PB -c "Set :CFBundleVersion 1" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :CFBundleVersion string 1" "$PLIST"
+
+          $PB -c "Set :MinimumOSVersion ${DEPLOYMENT_TARGET}" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :MinimumOSVersion string ${DEPLOYMENT_TARGET}" "$PLIST"
+
+          $PB -c "Delete :UIBackgroundModes" "$PLIST" 2>/dev/null || true
+          $PB -c "Add :UIBackgroundModes array" "$PLIST"
+          $PB -c "Add :UIBackgroundModes:0 string audio" "$PLIST"
+          $PB -c "Add :UIBackgroundModes:1 string fetch" "$PLIST"
+
+          $PB -c "Delete :NSAppTransportSecurity" "$PLIST" 2>/dev/null || true
+          $PB -c "Add :NSAppTransportSecurity dict" "$PLIST"
+          $PB -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$PLIST"
+
+          $PB -c "Set :UIRequiresFullScreen true" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :UIRequiresFullScreen bool true" "$PLIST"
+
+          $PB -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST" 2>/dev/null || \
+            $PB -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST"
+
+          echo "✅ Info.plist yeniləndi:"
+          $PB -c "Print" "$PLIST" | head -60
+
       - name: Install CocoaPods
+        shell: bash
         run: |
+          set -e
+          set -o pipefail
           cd ios/App
           pod install --repo-update
 
       - name: Build Unsigned Archive
+        shell: bash
         run: |
+          set -e
+          set -o pipefail
           cd ios/App
-          xcodebuild \
-            -workspace App.xcworkspace \
-            -scheme App \
-            -configuration Release \
-            -sdk iphoneos \
-            -archivePath "$PWD/build/Ryhavean.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            archive | xcpretty || exit 1
 
-      - name: Package Corrected IPA Structure
+          XCPRETTY=$(command -v xcpretty || echo "")
+
+          XCBUILD_CMD=(xcodebuild
+            -workspace App.xcworkspace
+            -scheme App
+            -configuration Release
+            -sdk iphoneos
+            -destination "generic/platform=iOS"
+            -archivePath "$PWD/build/${APP_NAME}.xcarchive"
+            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGN_IDENTITY=
+            EXPANDED_CODE_SIGN_IDENTITY=
+            DEVELOPMENT_TEAM=
+            PROVISIONING_PROFILE_SPECIFIER=
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+            ENABLE_BITCODE=NO
+            ONLY_ACTIVE_ARCH=NO
+            ARCHS=arm64
+            IPHONEOS_DEPLOYMENT_TARGET=13.0
+            archive)
+
+          if [ -n "$XCPRETTY" ]; then
+            "${XCBUILD_CMD[@]}" | tee build.log | "$XCPRETTY"
+          else
+            "${XCBUILD_CMD[@]}" | tee build.log
+          fi
+
+          if [ ! -d "build/${APP_NAME}.xcarchive/Products/Applications" ]; then
+            echo "::error::Archive yaradılmadı və ya pozulub"
+            tail -100 build.log || true
+            exit 1
+          fi
+
+      - name: Package Unsigned IPA (Scarlet/Sideloadly compatible)
+        shell: bash
         run: |
+          set -e
+          set -o pipefail
           cd ios/App
+
+          ARCHIVE_APPS="build/${APP_NAME}.xcarchive/Products/Applications"
+          APP_PATH=$(find "$ARCHIVE_APPS" -maxdepth 1 -type d -name "*.app" | head -n 1)
+
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "::error::Archive daxilində .app tapılmadı"
+            ls -laR build/${APP_NAME}.xcarchive || true
+            exit 1
+          fi
+
+          APP_BASENAME=$(basename "$APP_PATH")
+          echo "📦 Tapılan .app: $APP_BASENAME"
+
+          rm -rf build/Payload
           mkdir -p build/Payload
-          APP_PATH=$(find build/Ryhavean.xcarchive/Products/Applications -maxdepth 1 -type d -name "*.app" | head -n 1)
-          cp -R "$APP_PATH" build/Payload/
+          cp -R "$APP_PATH" "build/Payload/"
+
+          DEST_APP="build/Payload/${APP_BASENAME}"
+
+          # Sideloadly/Scarlet üçün təmizlik:
+          rm -rf "${DEST_APP}/_CodeSignature"
+          rm -f "${DEST_APP}/embedded.mobileprovision"
+          if [ -d "${DEST_APP}/Frameworks" ]; then
+            find "${DEST_APP}/Frameworks" -type d -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
+            find "${DEST_APP}/Frameworks" -type f -name "embedded.mobileprovision" -delete 2>/dev/null || true
+          fi
+          for sub in PlugIns Watch; do
+            if [ -d "${DEST_APP}/${sub}" ]; then
+              find "${DEST_APP}/${sub}" -type d -name "_CodeSignature" -exec rm -rf {} + 2>/dev/null || true
+              find "${DEST_APP}/${sub}" -type f -name "embedded.mobileprovision" -delete 2>/dev/null || true
+            fi
+          done
+
+          APP_SIZE_KB=$(du -sk "${DEST_APP}" | cut -f1)
+          APP_SIZE_MB=$((APP_SIZE_KB / 1024))
+          echo "📏 .app ölçüsü: ${APP_SIZE_MB} MB (${APP_SIZE_KB} KB)"
+          echo "📂 .app içindəkilər:"
+          ls -la "${DEST_APP}" | head -40
+
+          if [ -d "${DEST_APP}/Frameworks" ]; then
+            echo "🔗 Frameworks:"
+            ls "${DEST_APP}/Frameworks"
+          else
+            echo "::warning::.app daxilində Frameworks qovluğu yoxdur!"
+          fi
+
+          if [ "$APP_SIZE_KB" -lt 3000 ]; then
+            echo "::error::.app bundle çox kiçikdir (${APP_SIZE_KB} KB). Build natamamdır."
+            echo "Bu adətən Frameworks-in embed olunmaması deməkdir."
+            exit 1
+          fi
+
           cd build
-          zip -qr Ryhavean-unsigned.ipa Payload
+          rm -f "${APP_NAME}-unsigned.ipa"
+          zip -qry "${APP_NAME}-unsigned.ipa" Payload
           rm -rf Payload
+
+          IPA_SIZE_KB=$(du -sk "${APP_NAME}-unsigned.ipa" | cut -f1)
+          IPA_SIZE_MB=$((IPA_SIZE_KB / 1024))
+          echo "✅ IPA hazırdır: ${APP_NAME}-unsigned.ipa (${IPA_SIZE_MB} MB / ${IPA_SIZE_KB} KB)"
+
+          if [ "$IPA_SIZE_KB" -lt 2000 ]; then
+            echo "::error::IPA çox kiçikdir. Yenidən yoxlayın."
+            exit 1
+          fi
 
       - name: Upload Finished IPA
         uses: actions/upload-artifact@v4
         with:
           name: Ryhavean-Final-IPA
           path: frontend/ios/App/build/Ryhavean-unsigned.ipa
+          retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: frontend/ios/App/build.log
           retention-days: 7
