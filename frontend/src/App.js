@@ -1005,11 +1005,11 @@ const WelcomeScreen = ({ onEnter }) => {
         </div>
         <div className="welcome-text">
           <h1 className="welcome-title">
-            Studio quality.
-            <span className="accent-line">Saf səs.</span>
+            Ryhavean Studio 
+            <span className="accent-line">Spotify</span>
           </h1>
           <p className="welcome-sub">
-            Azərbaycanın ən yaxşı mahnıları — premium, reklamsız və limitsiz dinləmə təcrübəsi.
+            Global ən yaxşı mahnılar — premium, reklamsız və limitsiz dinləmə imkanı.
           </p>
         </div>
       </div>
@@ -1021,10 +1021,10 @@ const WelcomeScreen = ({ onEnter }) => {
           <div className="welcome-feature"><Zap size={13} /> Background</div>
         </div>
         <button className="welcome-btn" onClick={handle} data-testid="welcome-enter-btn">
-          Daxil Ol <ArrowRight size={18} />
+           <ArrowRight size={18} />
         </button>
         <div className="welcome-foot">
-          By <span className="gold">Ryhavean</span> · @rveanx
+          By <span className="gold">Ryhavean</span> 
         </div>
       </div>
     </div>
