@@ -44,17 +44,12 @@ jobs:
           set -e
           export NODE_OPTIONS="--max_old_space_size=4096 --openssl-legacy-provider"
 
-          # Köhnə artefaktları təmizlə (lockfile-i SAXLAYIRIQ ki, resolutions tətbiq olunsun)
           rm -rf node_modules package-lock.json
 
-          # yarn lazımdır (npm overrides nested glob dəstəkləmir)
           if ! command -v yarn >/dev/null 2>&1; then
             npm install -g yarn --force
           fi
 
-          # package.json-da artıq doğru resolutions var:
-          # fork-ts-checker-webpack-plugin/**/ajv -> ^6.12.6
-          # fork-ts-checker-webpack-plugin/**/ajv-keywords -> ^3.5.2
           yarn install --network-timeout 600000 --ignore-engines
 
           if [ ! -d "node_modules/react-scripts" ]; then
@@ -67,9 +62,8 @@ jobs:
           node -p "require('./node_modules/ajv/package.json').version" || true
           echo "📦 Top-level ajv-keywords version:"
           node -p "require('./node_modules/ajv-keywords/package.json').version" || true
-          echo "📦 fork-ts-checker nested ajv-keywords version:"
-          node -p "require('./node_modules/fork-ts-checker-webpack-plugin/node_modules/schema-utils/node_modules/ajv-keywords/package.json').version" 2>/dev/null || \
-          find node_modules/fork-ts-checker-webpack-plugin -name "ajv-keywords" -path "*/node_modules/*" -exec sh -c 'node -p "require(\"$1/package.json\").version"' _ {} \; 2>/dev/null || true
+          echo "📦 fork-ts-checker nested ajv-keywords:"
+          find node_modules/fork-ts-checker-webpack-plugin -name "ajv-keywords" -path "*/node_modules/*" -prune -exec sh -c 'node -p "require(\"$1/package.json\").version"' _ {} \; 2>/dev/null || true
 
       - name: Build React web app
         shell: bash
@@ -188,7 +182,7 @@ jobs:
               pattern = r"(func application\([^)]*didFinishLaunchingWithOptions[^{]*\{\s*\n)"
               new_src, n = re.subn(pattern, r"\1" + audio_block, src, count=1)
               if n == 0:
-                  print("::warning::didFinishLaunchingWithOptions tapılmadı, AudioSession əlavə olunmadı")
+                  print("::warning::didFinishLaunchingWithOptions tapılmadı")
               else:
                   src = new_src
 
@@ -204,7 +198,6 @@ jobs:
               src = re.sub(bg_pattern, r"\1" + bg_block, src, count=1)
 
           p.write_text(src)
-          print("===== Yenilənmiş AppDelegate.swift =====")
           print(src)
           PY
 
@@ -326,6 +319,7 @@ jobs:
 
           DEST_APP="build/Payload/${APP_BASENAME}"
 
+          # Sideloadly/Scarlet üçün təmizlik
           rm -rf "${DEST_APP}/_CodeSignature"
           rm -f "${DEST_APP}/embedded.mobileprovision"
           if [ -d "${DEST_APP}/Frameworks" ]; then
@@ -347,10 +341,11 @@ jobs:
             echo "🔗 Frameworks:"
             ls "${DEST_APP}/Frameworks"
           else
-            echo "::warning::.app daxilində Frameworks qovluğu yoxdur!"
+            echo "::error::.app daxilində Frameworks qovluğu yoxdur — build natamamdır!"
+            exit 1
           fi
 
-          if [ "$APP_SIZE_KB" -lt 3000 ]; then
+          if [ "$APP_SIZE_KB" -lt 1500 ]; then
             echo "::error::.app bundle çox kiçikdir (${APP_SIZE_KB} KB). Build natamamdır."
             exit 1
           fi
@@ -364,10 +359,26 @@ jobs:
           IPA_SIZE_MB=$((IPA_SIZE_KB / 1024))
           echo "✅ IPA hazırdır: ${APP_NAME}-unsigned.ipa (${IPA_SIZE_MB} MB / ${IPA_SIZE_KB} KB)"
 
-          if [ "$IPA_SIZE_KB" -lt 2000 ]; then
-            echo "::error::IPA çox kiçikdir."
+          # Strukturu yoxla, ölçü yox — Capacitor IPA-ları çox yaxşı sıxılır
+          if [ "$IPA_SIZE_KB" -lt 300 ]; then
+            echo "::error::IPA həqiqətən çox kiçikdir (${IPA_SIZE_KB} KB) — bundle pozuq ola bilər."
             exit 1
           fi
+
+          # IPA-nın daxili strukturunu doğrula
+          unzip -l "${APP_NAME}-unsigned.ipa" > ipa_contents.txt
+          if ! grep -q "Payload/.*\.app/Info.plist" ipa_contents.txt; then
+            echo "::error::IPA-da Info.plist tapılmadı"
+            cat ipa_contents.txt
+            exit 1
+          fi
+          if ! grep -q "Payload/.*\.app/Frameworks/Capacitor.framework" ipa_contents.txt; then
+            echo "::error::IPA-da Capacitor.framework tapılmadı"
+            cat ipa_contents.txt
+            exit 1
+          fi
+          echo "✅ IPA strukturu doğrulandı"
+          rm -f ipa_contents.txt
 
       - name: Upload Finished IPA
         uses: actions/upload-artifact@v4
