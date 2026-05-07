@@ -38,63 +38,38 @@ jobs:
         run: |
           sudo gem install xcpretty --no-document || gem install xcpretty --user-install --no-document
 
-      - name: Install JS dependencies
+      - name: Install JS dependencies (yarn ilə resolutions işləyir)
         shell: bash
         run: |
           set -e
           export NODE_OPTIONS="--max_old_space_size=4096 --openssl-legacy-provider"
-          rm -rf node_modules package-lock.json yarn.lock
 
-          # 1) Əvvəl ajv-i açıq şəkildə package.json-a əlavə edirik (məşhur react-scripts 5 problemi)
-          # ajv@^8 və ajv-keywords@^5 olmadan schema-utils crash edir
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
-            pkg.dependencies = pkg.dependencies || {};
-            pkg.dependencies['ajv'] = '^8.12.0';
-            pkg.dependencies['ajv-keywords'] = '^5.1.0';
-            pkg.overrides = pkg.overrides || {};
-            pkg.overrides['ajv'] = '^8.12.0';
-            pkg.overrides['ajv-keywords'] = '^5.1.0';
-            pkg.resolutions = pkg.resolutions || {};
-            pkg.resolutions['ajv'] = '^8.12.0';
-            pkg.resolutions['ajv-keywords'] = '^5.1.0';
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-            console.log('✅ package.json yeniləndi (ajv override əlavə edildi)');
-          "
+          # Köhnə artefaktları təmizlə (lockfile-i SAXLAYIRIQ ki, resolutions tətbiq olunsun)
+          rm -rf node_modules package-lock.json
 
-          # 2) İndi tam install
-          npm install --legacy-peer-deps --force --no-audit --no-fund 2>&1 | tee npm-install.log || {
-            echo "::warning::npm install uğursuz oldu, yarn ilə yenidən cəhd edirik..."
+          # yarn lazımdır (npm overrides nested glob dəstəkləmir)
+          if ! command -v yarn >/dev/null 2>&1; then
             npm install -g yarn --force
-            rm -rf node_modules
-            yarn install --network-timeout 600000 --ignore-engines
-          }
-
-          # 3) ajv hələ də düzgün versiyada olmaya bilər - əl ilə yenidən install edirik
-          npm install ajv@^8.12.0 ajv-keywords@^5.1.0 --legacy-peer-deps --force --no-audit --no-fund || true
-
-          # 4) Doğrulama
-          if [ ! -d "node_modules" ]; then
-            echo "::error::node_modules yaradılmadı"
-            exit 1
           fi
+
+          # package.json-da artıq doğru resolutions var:
+          # fork-ts-checker-webpack-plugin/**/ajv -> ^6.12.6
+          # fork-ts-checker-webpack-plugin/**/ajv-keywords -> ^3.5.2
+          yarn install --network-timeout 600000 --ignore-engines
+
           if [ ! -d "node_modules/react-scripts" ]; then
             echo "::error::react-scripts quraşdırılmadı"
             exit 1
           fi
-          # ajv crash testi
-          if [ ! -f "node_modules/ajv/dist/compile/codegen.js" ] && [ ! -d "node_modules/ajv/dist/compile/codegen" ]; then
-            echo "::warning::ajv hələ də problemli. Yenidən install edirik..."
-            rm -rf node_modules/ajv node_modules/ajv-keywords
-            npm install ajv@8.12.0 ajv-keywords@5.1.0 --legacy-peer-deps --force --no-save --no-audit --no-fund
-          fi
 
           echo "✅ Dependencies hazırdır"
-          echo "📦 ajv version:"
-          cat node_modules/ajv/package.json | node -e "console.log(JSON.parse(require('fs').readFileSync(0)).version)" || true
-          echo "📦 ajv-keywords version:"
-          cat node_modules/ajv-keywords/package.json | node -e "console.log(JSON.parse(require('fs').readFileSync(0)).version)" || true
+          echo "📦 Top-level ajv version:"
+          node -p "require('./node_modules/ajv/package.json').version" || true
+          echo "📦 Top-level ajv-keywords version:"
+          node -p "require('./node_modules/ajv-keywords/package.json').version" || true
+          echo "📦 fork-ts-checker nested ajv-keywords version:"
+          node -p "require('./node_modules/fork-ts-checker-webpack-plugin/node_modules/schema-utils/node_modules/ajv-keywords/package.json').version" 2>/dev/null || \
+          find node_modules/fork-ts-checker-webpack-plugin -name "ajv-keywords" -path "*/node_modules/*" -exec sh -c 'node -p "require(\"$1/package.json\").version"' _ {} \; 2>/dev/null || true
 
       - name: Build React web app
         shell: bash
@@ -114,12 +89,10 @@ jobs:
           SKIP_PREFLIGHT_CHECK=true
           EOF
 
-          # Build skript-i birbaşa node ilə çağırırıq, react-scripts 5 + React 19 üçün daha stabildir
-          CI=false npx --no-install react-scripts build || CI=false npm run build
+          CI=false yarn build
 
-          # Build-in nəticəsini doğrula
           if [ ! -d "build" ] || [ -z "$(ls -A build 2>/dev/null)" ]; then
-            echo "::error::React build folder boşdur və ya yoxdur. Build uğursuz oldu."
+            echo "::error::React build folder boşdur. Build uğursuz oldu."
             exit 1
           fi
           echo "✅ React build hazırdır:"
@@ -145,12 +118,10 @@ jobs:
             exit 1
           fi
 
-          # Mövcud post_install bloku varsa silirik
           python3 - <<'PY'
           import re, pathlib
           p = pathlib.Path("ios/App/Podfile")
           src = p.read_text()
-          # Existing post_install bloku təmizlə
           src = re.sub(r"post_install\s+do\s+\|installer\|.*?end\s*", "", src, flags=re.DOTALL)
           patch = """
           post_install do |installer|
@@ -200,11 +171,9 @@ jobs:
           p = pathlib.Path("ios/App/App/AppDelegate.swift")
           src = p.read_text()
 
-          # 1) AVFoundation import əlavə et (yoxdursa)
           if "import AVFoundation" not in src:
               src = re.sub(r"(import UIKit\s*\n)", r"\1import AVFoundation\n", src, count=1)
 
-          # 2) didFinishLaunchingWithOptions daxilinə AVAudioSession konfiqurasiyası əlavə et
           if "AVAudioSession.sharedInstance()" not in src:
               audio_block = (
                   "        // RyAudioManager: arxa plan / kilid ekranında musiqi davam etsin\n"
@@ -223,7 +192,6 @@ jobs:
               else:
                   src = new_src
 
-          # 3) App arxa plana keçəndə də audio session aktiv qalsın
           if "applicationDidEnterBackground" in src and "session.setActive(true)" not in src.split("applicationDidEnterBackground")[1][:500]:
               bg_pattern = r"(func applicationDidEnterBackground\([^)]*\)[^{]*\{\s*\n)"
               bg_block = (
@@ -358,7 +326,6 @@ jobs:
 
           DEST_APP="build/Payload/${APP_BASENAME}"
 
-          # Sideloadly/Scarlet üçün təmizlik
           rm -rf "${DEST_APP}/_CodeSignature"
           rm -f "${DEST_APP}/embedded.mobileprovision"
           if [ -d "${DEST_APP}/Frameworks" ]; then
@@ -375,8 +342,6 @@ jobs:
           APP_SIZE_KB=$(du -sk "${DEST_APP}" | cut -f1)
           APP_SIZE_MB=$((APP_SIZE_KB / 1024))
           echo "📏 .app ölçüsü: ${APP_SIZE_MB} MB (${APP_SIZE_KB} KB)"
-          echo "📂 .app içindəkilər:"
-          ls -la "${DEST_APP}" | head -40
 
           if [ -d "${DEST_APP}/Frameworks" ]; then
             echo "🔗 Frameworks:"
@@ -400,7 +365,7 @@ jobs:
           echo "✅ IPA hazırdır: ${APP_NAME}-unsigned.ipa (${IPA_SIZE_MB} MB / ${IPA_SIZE_KB} KB)"
 
           if [ "$IPA_SIZE_KB" -lt 2000 ]; then
-            echo "::error::IPA çox kiçikdir. Yenidən yoxlayın."
+            echo "::error::IPA çox kiçikdir."
             exit 1
           fi
 
