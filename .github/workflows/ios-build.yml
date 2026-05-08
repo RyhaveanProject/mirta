@@ -203,22 +203,117 @@ jobs:
             sed -i '' "s/PRODUCT_BUNDLE_IDENTIFIER = [^;]*;/PRODUCT_BUNDLE_IDENTIFIER = ${BUNDLE_ID};/g" "$PROJ" || true
           fi
 
-      - name: Patch AppDelegate (audio bg)
+      - name: Patch AppDelegate (robust background audio)
         shell: bash
         run: |
-          python3 - <<'PY'
-          import re, pathlib
-          p = pathlib.Path("ios/App/App/AppDelegate.swift")
-          src = p.read_text()
-          if "import AVFoundation" not in src:
-              src = re.sub(r"(import UIKit\s*\n)", r"\1import AVFoundation\n", src, count=1)
-          if "AVAudioSession.sharedInstance()" not in src:
-              audio = ('        do {\n            let s = AVAudioSession.sharedInstance()\n'
-                       '            try s.setCategory(.playback, mode: .default, options: [])\n'
-                       '            try s.setActive(true)\n        } catch {}\n')
-              src, _ = re.subn(r"(func application\([^)]*didFinishLaunchingWithOptions[^{]*\{\s*\n)", r"\1" + audio, src, count=1)
-          p.write_text(src)
-          PY
+          cat > ios/App/App/AppDelegate.swift <<'SWIFT'
+          import UIKit
+          import Capacitor
+          import AVFoundation
+          import MediaPlayer
+
+          @UIApplicationMain
+          class AppDelegate: UIResponder, UIApplicationDelegate {
+
+              var window: UIWindow?
+
+              // MARK: - Audio session
+              private func activateAudioSession() {
+                  let s = AVAudioSession.sharedInstance()
+                  do {
+                      // .playback + .longFormAudio = arxa plan / kilid ekran musiqi üçün doğru rejim
+                      if #available(iOS 11.0, *) {
+                          try s.setCategory(.playback,
+                                            mode: .default,
+                                            policy: .longFormAudio,
+                                            options: [])
+                      } else {
+                          try s.setCategory(.playback, mode: .default, options: [])
+                      }
+                      try s.setActive(true, options: [])
+                  } catch {
+                      NSLog("AVAudioSession activate error: \(error)")
+                  }
+              }
+
+              private func registerAudioObservers() {
+                  let nc = NotificationCenter.default
+
+                  // Zəng və ya başqa app interrupt etdikdə bitəndən sonra avtomatik bərpa
+                  nc.addObserver(forName: AVAudioSession.interruptionNotification,
+                                 object: nil,
+                                 queue: .main) { [weak self] note in
+                      guard
+                          let info = note.userInfo,
+                          let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                          let type = AVAudioSession.InterruptionType(rawValue: raw)
+                      else { return }
+                      if type == .ended {
+                          var shouldResume = true
+                          if let optsRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt {
+                              let opts = AVAudioSession.InterruptionOptions(rawValue: optsRaw)
+                              shouldResume = opts.contains(.shouldResume)
+                          }
+                          if shouldResume {
+                              self?.activateAudioSession()
+                              // JS tərəfdə audio.play() yenidən cəhd edilsin
+                              NotificationCenter.default.post(name: Notification.Name("RyAudioShouldResume"),
+                                                              object: nil)
+                          }
+                      }
+                  }
+
+                  // Qulaqlıq çıxarıldıqda iOS standart davranışı: pauza. Bunu qoruyuruq.
+                  nc.addObserver(forName: AVAudioSession.routeChangeNotification,
+                                 object: nil,
+                                 queue: .main) { _ in /* no-op */ }
+              }
+
+              // MARK: - App lifecycle
+              func application(_ application: UIApplication,
+                               didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+                  activateAudioSession()
+                  registerAudioObservers()
+                  // Remote control event-ləri (kilid ekranı düymələri) qəbul olunsun
+                  application.beginReceivingRemoteControlEvents()
+                  return true
+              }
+
+              func applicationWillResignActive(_ application: UIApplication) {}
+
+              func applicationDidEnterBackground(_ application: UIApplication) {
+                  // Arxa plana keçəndə sessiyanı bir daha aktiv saxlayaq
+                  activateAudioSession()
+              }
+
+              func applicationWillEnterForeground(_ application: UIApplication) {
+                  activateAudioSession()
+              }
+
+              func applicationDidBecomeActive(_ application: UIApplication) {
+                  activateAudioSession()
+              }
+
+              func applicationWillTerminate(_ application: UIApplication) {
+                  try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+              }
+
+              func application(_ app: UIApplication,
+                               open url: URL,
+                               options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+                  return ApplicationDelegateProxy.shared.application(app, open: url, options: options)
+              }
+
+              func application(_ application: UIApplication,
+                               continue userActivity: NSUserActivity,
+                               restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {
+                  return ApplicationDelegateProxy.shared.application(application,
+                                                                     continue: userActivity,
+                                                                     restorationHandler: restorationHandler)
+              }
+          }
+          SWIFT
+          echo "AppDelegate.swift rewritten"
 
       - name: "Rewrite Info.plist (LaunchScreen + Audio BG + iOS 13+)"
         shell: bash
