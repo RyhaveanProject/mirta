@@ -7,6 +7,7 @@ import os
 import time
 import logging
 import asyncio
+import random
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Optional
@@ -29,16 +30,33 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("ryhavean")
 
 # ---------- yt-dlp config ----------
-YDL_SEARCH_OPTS = {
-    "quiet": True, "no_warnings": True, "skip_download": True,
-    "extract_flat": True, "default_search": "ytsearch",
-    "noplaylist": True, "socket_timeout": 15,
-}
-YDL_STREAM_OPTS = {
-    "quiet": True, "no_warnings": True, "skip_download": True,
-    "format": "bestaudio[ext=m4a]/bestaudio/best",
-    "noplaylist": True, "socket_timeout": 15,
-}
+# IMPORTANT: We rotate User-Agents and use mobile clients to reduce
+# YouTube bot detection on the small number of resolves we still do.
+_USER_AGENTS = [
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+]
+
+def _make_search_opts():
+    return {
+        "quiet": True, "no_warnings": True, "skip_download": True,
+        "extract_flat": True, "default_search": "ytsearch",
+        "noplaylist": True, "socket_timeout": 15,
+        "user_agent": random.choice(_USER_AGENTS),
+        "extractor_args": {"youtube": {"player_client": ["ios", "web"]}},
+    }
+
+def _make_stream_opts():
+    return {
+        "quiet": True, "no_warnings": True, "skip_download": True,
+        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "noplaylist": True, "socket_timeout": 15,
+        "user_agent": random.choice(_USER_AGENTS),
+        # iOS client first → returns most-compatible URLs that the device
+        # itself can fetch directly (so each user uses their own IP).
+        "extractor_args": {"youtube": {"player_client": ["ios", "android", "web"]}},
+    }
 
 # ---------- TTL cache ----------
 _CACHE: dict = {}
@@ -61,7 +79,7 @@ def cache_set(key: str, data, ttl: int):
 
 # ---------- yt-dlp helpers ----------
 def _search_sync(query: str, limit: int = 20):
-    opts = dict(YDL_SEARCH_OPTS)
+    opts = _make_search_opts()
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
     entries = info.get("entries", []) if info else []
@@ -89,7 +107,7 @@ def _search_sync(query: str, limit: int = 20):
     return results
 
 def _stream_sync(video_id: str):
-    opts = dict(YDL_STREAM_OPTS)
+    opts = _make_stream_opts()
     url = f"https://www.youtube.com/watch?v={video_id}"
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -187,6 +205,16 @@ async def root():
     return {"app": "Ryhavean Spotify", "status": "ok"}
 
 
+@api.get("/version")
+async def version():
+    """Used by IPA to detect when a new build is available (auto-update hook)."""
+    return {
+        "version": os.environ.get("APP_VERSION", "1.0.1"),
+        "min_supported": "1.0.0",
+        "build": int(time.time()),
+    }
+
+
 @api.get("/search")
 async def search(q: str = Query(..., min_length=1), limit: int = 20):
     try:
@@ -208,18 +236,20 @@ async def _increment_play(video_id, data):
     )
 
 
-# ---------- /stream/{id} - frontend metadata + proxy URL ----------
+# ---------- /stream/{id} ----------
+# CRITICAL CHANGE: Returns DIRECT googlevideo URL by default.
+# Each user device fetches the audio bytes directly from googlevideo
+# using their OWN IP — Vercel/Render is NOT used as a proxy for audio
+# bytes anymore. This:
+#   1. Eliminates server bandwidth load on Vercel/Render
+#   2. Avoids YouTube blocking the shared server IP for bot abuse
+#   3. Lets each device benefit from Google's CDN nearest to it
+# Use ?proxy=1 query to fall back to the proxy mode (for older clients
+# or when CDN refuses the device IP).
 @api.get("/stream/{video_id}")
-async def stream_meta(video_id: str, request: Request):
-    """
-    Frontend bu endpoint-i Ã§aÄÄ±rÄ±r. `stream_url` olaraq Ã¶z proxy URL-imizi
-    qaytarÄ±rÄ±q â belÉliklÉ audio element hÉmiÅÉ eyni stabil URL ilÉ iÅlÉyir,
-    arxa planda Range request-lÉrindÉ googlevideo expired URL-lÉri ilÉ
-    qarÅÄ±laÅmÄ±r. Bu, iOS lock screen / background playback Ã¼Ã§Ã¼n kritikdir.
-    """
+async def stream_meta(video_id: str, request: Request, proxy: int = 0):
     data = await _resolve_stream(video_id)
     if not data:
-        # SadÉcÉ metadata fallback (arayÄ±Åla)
         try:
             rs = await yt_search(video_id, limit=1, cache=False)
             if rs:
@@ -234,8 +264,14 @@ async def stream_meta(video_id: str, request: Request):
     if not data:
         raise HTTPException(status_code=404, detail="Stream not found")
 
-    base = str(request.base_url).rstrip("/")
-    proxy_url = f"{base}/api/audio/{video_id}" if data.get("stream_url") else None
+    # Choose stream URL strategy:
+    #   - default: direct googlevideo URL (device's own IP)
+    #   - proxy=1: route through our /api/audio proxy (server IP)
+    if proxy and data.get("stream_url"):
+        base = str(request.base_url).rstrip("/")
+        out_url = f"{base}/api/audio/{video_id}"
+    else:
+        out_url = data.get("stream_url")  # direct googlevideo URL
 
     try:
         await _increment_play(video_id, data)
@@ -248,21 +284,21 @@ async def stream_meta(video_id: str, request: Request):
         "artist": data.get("artist"),
         "duration": data.get("duration"),
         "thumbnail": data.get("thumbnail"),
-        "stream_url": proxy_url,
+        "stream_url": out_url,
+        "direct": not bool(proxy),
     }
 
 
-# KÃ¶hnÉ endpoint geriyÉ uyÄunluq Ã¼Ã§Ã¼n saxlanÄ±lÄ±r
 @api.get("/stream-info/{video_id}")
-async def stream_info(video_id: str, request: Request):
-    return await stream_meta(video_id, request)
+async def stream_info(video_id: str, request: Request, proxy: int = 0):
+    return await stream_meta(video_id, request, proxy)
 
 
-# ---------- /audio/{id} - actual audio proxy stream ----------
+# ---------- /audio/{id} - audio proxy stream (fallback only) ----------
 _AUDIO_HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=15.0)
 _PROXY_UA = (
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
+    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 )
 
 async def _open_upstream(url: str, range_header: Optional[str]):
@@ -281,14 +317,7 @@ async def _open_upstream(url: str, range_header: Optional[str]):
 
 @api.get("/audio/{video_id}")
 async def audio_proxy(video_id: str, request: Request):
-    """
-    Audio mÉzmununu proxy ilÉ Ã¶tÃ¼rÃ¼r.
-    - HTTP Range request-lÉrini tam dÉstÉklÉyir (iOS lock screen Ã¼Ã§Ã¼n KRÄ°TÄ°K)
-    - Upstream URL expire olarsa (403/410/404), avtomatik refresh + retry
-    - Frontend-dÉn baxanda URL hÉmiÅÉ eyni stabil endpoint olur
-    """
     range_header = request.headers.get("range")
-
     data = await _resolve_stream(video_id)
     if not data or not data.get("stream_url"):
         raise HTTPException(status_code=404, detail="Audio not available")
@@ -298,17 +327,11 @@ async def audio_proxy(video_id: str, request: Request):
     resp = None
     try:
         upstream_client, resp = await _open_upstream(upstream_url, range_header)
-
-        # Expired upstream â refresh + retry bir dÉfÉ
         if resp.status_code in (403, 404, 410):
-            try:
-                await resp.aclose()
-            except Exception:
-                pass
-            try:
-                await upstream_client.aclose()
-            except Exception:
-                pass
+            try: await resp.aclose()
+            except Exception: pass
+            try: await upstream_client.aclose()
+            except Exception: pass
             data = await _resolve_stream(video_id, force=True)
             if not data or not data.get("stream_url"):
                 raise HTTPException(status_code=404, detail="Audio re-fetch failed")
@@ -352,7 +375,6 @@ async def audio_proxy(video_id: str, request: Request):
     )
 
 
-# FIX: MahnÄ± bitÉndÉ fÉrdi tÃ¶vsiyÉlÉr verir (YouTube tÉrzi)
 @api.get("/recommendations/{video_id}")
 async def recommendations(video_id: str, session_id: Optional[str] = None):
     try:
@@ -362,7 +384,7 @@ async def recommendations(video_id: str, session_id: Optional[str] = None):
             if recent:
                 artists = [r["artist"] for r in recent if r["artist"] != "Unknown artist"]
                 if artists:
-                    query = f"{artists[0]} oxÅar mahnÄ±lar"
+                    query = f"{artists[0]} oxsar mahnilar"
 
         results = await yt_search(query, limit=20)
         results = [r for r in results if r["id"] != video_id]
@@ -437,7 +459,7 @@ async def trending(limit: int = 20):
 
 
 # ---- Featured (Azerbaijani TOP) ----
-AZ_ARTIST_QUERIES = ["Miri Yusif", "AygÃ¼n KazÄ±mova", "Ãakal rap", "Alizade Azerbaijan", "Lvbel C5"]
+AZ_ARTIST_QUERIES = ["Miri Yusif", "Aygun Kazimova", "Cakal rap", "Alizade Azerbaijan", "Lvbel C5"]
 AZ_TOP_QUERIES = ["azerbaijan top mahnilar 2025", "azeri top music 2025", "azerbaycan yeni mahnilar", "azeri hit mahnilar"]
 FEATURED_QUERIES = AZ_TOP_QUERIES + AZ_ARTIST_QUERIES + ["azeri pop 2025", "azeri rap 2025", "azerbaycan rep", "Turkish Azeri hits"]
 
@@ -468,7 +490,7 @@ async def home_bootstrap(session_id: Optional[str] = None):
         recent = await db.recently_played.find({"session_id": session_id}).sort("played_at", -1).to_list(5)
         if len(recent) >= 3:
             fav_artist = recent[0]["artist"]
-            query_discovery = f"{fav_artist} oxÅar hitlÉr"
+            query_discovery = f"{fav_artist} oxsar hitler"
 
     top_task = asyncio.create_task(yt_search(query_top, limit=15, ttl=_CACHE_TTL_FEATURED))
     artists_task = asyncio.create_task(yt_search(AZ_ARTIST_QUERIES[0], limit=15, ttl=_CACHE_TTL_FEATURED))
