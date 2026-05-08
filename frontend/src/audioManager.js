@@ -236,12 +236,17 @@ class RyAudioManager {
   }
 
   _setupVisibility() {
+    const tryPlay = () => {
+      if (!this._wantPlaying) return;
+      if (this.audio.paused) {
+        const p = this.audio.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      }
+    };
+
     const reassert = () => {
       if (this._wantPlaying) {
-        if (this.audio.paused) {
-          const p = this.audio.play();
-          if (p && typeof p.catch === "function") p.catch(() => {});
-        }
+        tryPlay();
         this._setPlaybackState("playing");
         this._updatePositionState();
       } else {
@@ -262,6 +267,16 @@ class RyAudioManager {
     });
 
     document.addEventListener("resume", reassert);
+
+    // iOS arxa plan: audio session interrupt və ya WKWebView pause edəndə
+    // periodik olaraq play()-i təkrar yoxlayaq. Bu, kilid ekranındakı
+    // dayanmaları aradan qaldırır.
+    setInterval(() => {
+      if (this._wantPlaying && this.audio && this.audio.paused && this.audio.src) {
+        const p = this.audio.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      }
+    }, 1500);
   }
 
   async attachStream(url, meta = {}) {
