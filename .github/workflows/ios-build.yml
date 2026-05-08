@@ -1,4 +1,4 @@
-name: Build iOS IPA (Scarlet Enterprise v3)
+name: Build iOS IPA (Scarlet Enterprise v4 - LaunchFix + LiveServer)
 
 on:
   workflow_dispatch:
@@ -89,6 +89,83 @@ jobs:
           }
           JSON
 
+      - name: "FIX WHITE SCREEN - Setup Splash + LaunchScreen storyboard"
+        shell: bash
+        run: |
+          set -e
+          # 1) Splash imageset (logo gostermek ucun)
+          SPLASH_SRC="public/icons/splash.png"
+          [ ! -f "$SPLASH_SRC" ] && SPLASH_SRC="public/icons/icon-512.png"
+
+          SPLASH_DST="ios/App/App/Assets.xcassets/Splash.imageset"
+          mkdir -p "$SPLASH_DST"
+          cp -f "$SPLASH_SRC" "$SPLASH_DST/splash.png"
+          cp -f "$SPLASH_SRC" "$SPLASH_DST/splash@2x.png"
+          cp -f "$SPLASH_SRC" "$SPLASH_DST/splash@3x.png"
+
+          cat > "$SPLASH_DST/Contents.json" <<'JSON'
+          {
+            "images" : [
+              { "idiom" : "universal", "filename" : "splash.png",    "scale" : "1x" },
+              { "idiom" : "universal", "filename" : "splash@2x.png", "scale" : "2x" },
+              { "idiom" : "universal", "filename" : "splash@3x.png", "scale" : "3x" }
+            ],
+            "info" : { "version" : 1, "author" : "xcode" }
+          }
+          JSON
+
+          # 2) LaunchScreen.storyboard - ag ekran problemini hell edir
+          # Logo ortada, qara fon (#0a0a0b) ile
+          mkdir -p "ios/App/App/Base.lproj"
+          cat > "ios/App/App/Base.lproj/LaunchScreen.storyboard" <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0" toolsVersion="22500" targetRuntime="iOS.CocoaTouch" propertyAccessControl="none" useAutolayout="YES" launchScreen="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES" initialViewController="01J-lp-oVM">
+              <device id="retina6_1" orientation="portrait" appearance="dark"/>
+              <dependencies>
+                  <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="22504"/>
+                  <capability name="Safe area layout guides" minToolsVersion="9.0"/>
+                  <capability name="System colors in document resources" minToolsVersion="11.0"/>
+                  <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+              </dependencies>
+              <scenes>
+                  <scene sceneID="EHf-IW-A2E">
+                      <objects>
+                          <viewController id="01J-lp-oVM" sceneMemberID="viewController">
+                              <view key="view" contentMode="scaleToFill" insetsLayoutMarginsFromSafeArea="NO" id="Ze5-6b-2t3">
+                                  <rect key="frame" x="0.0" y="0.0" width="390" height="844"/>
+                                  <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                                  <subviews>
+                                      <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="Splash" translatesAutoresizingMaskIntoConstraints="NO" id="LOG-O0-001">
+                                          <rect key="frame" x="95" y="322" width="200" height="200"/>
+                                          <constraints>
+                                              <constraint firstAttribute="width" constant="200" id="W00-00-001"/>
+                                              <constraint firstAttribute="height" constant="200" id="H00-00-001"/>
+                                          </constraints>
+                                      </imageView>
+                                  </subviews>
+                                  <viewLayoutGuide key="safeArea" id="6Tk-OE-BBY"/>
+                                  <color key="backgroundColor" red="0.039215686274509803" green="0.039215686274509803" blue="0.043137254901960784" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                                  <constraints>
+                                      <constraint firstItem="LOG-O0-001" firstAttribute="centerX" secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="CX0-00-001"/>
+                                      <constraint firstItem="LOG-O0-001" firstAttribute="centerY" secondItem="Ze5-6b-2t3" secondAttribute="centerY" id="CY0-00-001"/>
+                                  </constraints>
+                              </view>
+                          </viewController>
+                          <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
+                      </objects>
+                      <point key="canvasLocation" x="53" y="375"/>
+                  </scene>
+              </scenes>
+              <resources>
+                  <image name="Splash" width="200" height="200"/>
+              </resources>
+          </document>
+          XML
+
+          # 3) LaunchScreen reference-i project.pbxproj-da var olmalidir.
+          # Capacitor templati ile gelir, biz sadece sinhronlasdiririq.
+          npx cap sync ios
+
       - name: Patch Podfile
         shell: bash
         run: |
@@ -143,12 +220,11 @@ jobs:
           p.write_text(src)
           PY
 
-      - name: "⭐ Rewrite Info.plist (clean XML, Scarlet-friendly)"
+      - name: "Rewrite Info.plist (LaunchScreen + Audio BG + iOS 13+)"
         shell: bash
         run: |
           set -e
           PLIST="ios/App/App/Info.plist"
-          # Tam yenidən yaz — köhnə formatı təmiz XML ilə əvəz et
           cat > "$PLIST" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -169,9 +245,9 @@ jobs:
             <key>CFBundlePackageType</key>
             <string>APPL</string>
             <key>CFBundleShortVersionString</key>
-            <string>1.0.0</string>
+            <string>1.0.1</string>
             <key>CFBundleVersion</key>
-            <string>1</string>
+            <string>2</string>
             <key>CFBundleSignature</key>
             <string>????</string>
             <key>LSRequiresIPhoneOS</key>
@@ -220,6 +296,10 @@ jobs:
             <dict>
               <key>NSAllowsArbitraryLoads</key>
               <true/>
+              <key>NSAllowsArbitraryLoadsInWebContent</key>
+              <true/>
+              <key>NSAllowsLocalNetworking</key>
+              <true/>
             </dict>
             <key>UIDeviceFamily</key>
             <array>
@@ -251,20 +331,21 @@ jobs:
             <true/>
             <key>UIStatusBarStyle</key>
             <string>UIStatusBarStyleLightContent</string>
+            <key>UIUserInterfaceStyle</key>
+            <string>Dark</string>
             <key>ITSAppUsesNonExemptEncryption</key>
             <false/>
             <key>NSCameraUsageDescription</key>
-            <string>Şəkillər üçün kamera icazəsi</string>
+            <string>Sekiller ucun kamera icazesi</string>
             <key>NSMicrophoneUsageDescription</key>
-            <string>Səs yazısı üçün mikrofon icazəsi</string>
+            <string>Ses yazisi ucun mikrofon icazesi</string>
             <key>NSPhotoLibraryUsageDescription</key>
-            <string>Şəkilləri saxlamaq üçün</string>
+            <string>Sekilleri saxlamaq ucun</string>
           </dict>
           </plist>
           EOF
-          # Validation
           plutil -lint "$PLIST"
-          echo "✅ Info.plist təmiz XML, validdir"
+          echo "Info.plist OK"
 
       - name: Install CocoaPods
         run: cd ios/App && pod install --repo-update
@@ -302,7 +383,7 @@ jobs:
             IPHONEOS_DEPLOYMENT_TARGET=13.0 \
             archive 2>&1 | tee build.log
 
-      - name: Fake-sign with ldid (Scarlet üçün ən stabil)
+      - name: Fake-sign with ldid
         shell: bash
         run: |
           set -e
@@ -310,15 +391,10 @@ jobs:
           APP_PATH=$(find "build/${APP_NAME}.xcarchive/Products/Applications" -maxdepth 1 -type d -name "*.app" | head -n 1)
           ENT="App/App.entitlements"
 
-          # Bütün köhnə imzaları sil
           find "$APP_PATH" -name "_CodeSignature" -type d -exec rm -rf {} + 2>/dev/null || true
           find "$APP_PATH" -name "embedded.mobileprovision" -delete 2>/dev/null || true
 
-          # ldid ilə əsas binary-ni və framework-ləri fake-sign et
-          # ldid Scarlet/Sideloadly ilə daha yaxşı işləyir codesign-dan
           if command -v ldid >/dev/null 2>&1; then
-            echo "🔏 ldid ilə imzalama"
-            # Frameworks
             if [ -d "$APP_PATH/Frameworks" ]; then
               find "$APP_PATH/Frameworks" -type f \( -name "*.dylib" -o -path "*/Frameworks/*" -name "*.framework" -prune -o -type f \) -print | while read f; do
                 if file "$f" 2>/dev/null | grep -q "Mach-O"; then
@@ -326,12 +402,10 @@ jobs:
                 fi
               done
             fi
-            # Əsas binary
             if [ -f "$APP_PATH/App" ]; then
               ldid -S"$ENT" "$APP_PATH/App" || ldid -S "$APP_PATH/App"
             fi
           else
-            # Fallback: codesign
             if [ -d "$APP_PATH/Frameworks" ]; then
               for fw in "$APP_PATH/Frameworks"/*.framework; do
                 [ -d "$fw" ] || continue
@@ -341,11 +415,9 @@ jobs:
             codesign --force --sign - --timestamp=none --entitlements "$ENT" "$APP_PATH"
           fi
 
-          # Verify
           codesign -dv "$APP_PATH" 2>&1 || true
-          echo "✅ Sign tamam"
 
-      - name: "⭐ Package IPA (Enterprise mode + iTunesMetadata)"
+      - name: Package IPA
         shell: bash
         run: |
           set -e
@@ -358,106 +430,62 @@ jobs:
           cp -R "$APP_PATH" "build/IPA_ROOT/Payload/"
 
           DEST_APP="build/IPA_ROOT/Payload/${APP_BASENAME}"
-
-          # Lazımsız faylları sil
           find "$DEST_APP" -name ".DS_Store" -delete 2>/dev/null || true
           find "$DEST_APP" -name "__MACOSX" -exec rm -rf {} + 2>/dev/null || true
 
-          # ⭐ iTunesMetadata.plist — Scarlet Enterprise mode bunu axtarır
           cat > build/IPA_ROOT/iTunesMetadata.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>artistName</key>
-              <string>Ryhavean</string>
-              <key>bundleDisplayName</key>
-              <string>${APP_NAME}</string>
-              <key>bundleShortVersionString</key>
-              <string>1.0.0</string>
-              <key>bundleVersion</key>
-              <string>1</string>
-              <key>copyright</key>
-              <string>© 2026 Ryhavean</string>
-              <key>fileExtension</key>
-              <string>.ipa</string>
-              <key>genre</key>
-              <string>Music</string>
-              <key>genreId</key>
-              <integer>6011</integer>
-              <key>itemId</key>
-              <integer>0</integer>
-              <key>itemName</key>
-              <string>${APP_NAME}</string>
-              <key>kind</key>
-              <string>software</string>
-              <key>playlistArtistName</key>
-              <string>Ryhavean</string>
-              <key>playlistName</key>
-              <string>${APP_NAME}</string>
-              <key>releaseDate</key>
-              <string>2026-01-01T00:00:00Z</string>
-              <key>softwareIcon57x57URL</key>
-              <string></string>
-              <key>softwareIconNeedsShine</key>
-              <false/>
-              <key>softwareSupportedDeviceIds</key>
-              <array>
-                  <integer>1</integer>
-              </array>
-              <key>softwareVersionBundleId</key>
-              <string>${BUNDLE_ID}</string>
-              <key>softwareVersionExternalIdentifier</key>
-              <integer>1</integer>
-              <key>vendorId</key>
-              <integer>0</integer>
+              <key>artistName</key><string>Ryhavean</string>
+              <key>bundleDisplayName</key><string>${APP_NAME}</string>
+              <key>bundleShortVersionString</key><string>1.0.1</string>
+              <key>bundleVersion</key><string>2</string>
+              <key>copyright</key><string>(c) 2026 Ryhavean</string>
+              <key>fileExtension</key><string>.ipa</string>
+              <key>genre</key><string>Music</string>
+              <key>genreId</key><integer>6011</integer>
+              <key>itemId</key><integer>0</integer>
+              <key>itemName</key><string>${APP_NAME}</string>
+              <key>kind</key><string>software</string>
+              <key>playlistArtistName</key><string>Ryhavean</string>
+              <key>playlistName</key><string>${APP_NAME}</string>
+              <key>releaseDate</key><string>2026-01-01T00:00:00Z</string>
+              <key>softwareIcon57x57URL</key><string></string>
+              <key>softwareIconNeedsShine</key><false/>
+              <key>softwareSupportedDeviceIds</key><array><integer>1</integer></array>
+              <key>softwareVersionBundleId</key><string>${BUNDLE_ID}</string>
+              <key>softwareVersionExternalIdentifier</key><integer>1</integer>
+              <key>vendorId</key><integer>0</integer>
           </dict>
           </plist>
           EOF
           plutil -lint build/IPA_ROOT/iTunesMetadata.plist
 
-          # ⭐ iTunesArtwork — 512x512 icon (köhnə App Store IPA tələbi)
-          if [ -f "public/../public/ios-icons/AppIcon-1024.png" ]; then
-            cp "public/../public/ios-icons/AppIcon-1024.png" build/IPA_ROOT/iTunesArtwork || true
-          fi
-          # public/ frontend altındadır:
-          if [ -f "../../public/ios-icons/AppIcon-1024.png" ]; then
-            cp "../../public/ios-icons/AppIcon-1024.png" build/IPA_ROOT/iTunesArtwork
-          fi
-          # daha sadə yol:
           ICON_1024="$GITHUB_WORKSPACE/frontend/public/ios-icons/AppIcon-1024.png"
           if [ -f "$ICON_1024" ]; then
             cp "$ICON_1024" build/IPA_ROOT/iTunesArtwork
             cp "$ICON_1024" build/IPA_ROOT/iTunesArtwork@2x
-            echo "✅ iTunesArtwork əlavə edildi"
           fi
 
-          # Bundle adını doğrula
           PB=/usr/libexec/PlistBuddy
           DN=$($PB -c 'Print :CFBundleDisplayName' "${DEST_APP}/Info.plist")
           BN=$($PB -c 'Print :CFBundleName' "${DEST_APP}/Info.plist")
-          echo "🏷  Display='${DN}'  Name='${BN}'"
           if [ "$DN" != "${APP_NAME}" ] || [ "$BN" != "${APP_NAME}" ]; then
-            echo "::error::Bundle adları yanlışdır"
-            exit 1
+            echo "::error::Bundle name mismatch"; exit 1
           fi
 
-          # ZIP — Payload, iTunesMetadata.plist, iTunesArtwork hamısı root-da
           cd build/IPA_ROOT
           rm -f "../${APP_NAME}.ipa"
-          # -X: macOS metadata sil
-          # -y: simlinks
           zip -qry -X "../${APP_NAME}.ipa" .
           cd ..
           rm -rf IPA_ROOT
 
-          echo "✅ IPA: $(du -h ${APP_NAME}.ipa | cut -f1)"
-
-          # Final yoxlama
-          unzip -l "${APP_NAME}.ipa" | head -30
-          unzip -l "${APP_NAME}.ipa" | grep -q "iTunesMetadata.plist" && echo "✅ iTunesMetadata.plist var" || echo "::warning::iTunesMetadata.plist yoxdur"
-          unzip -l "${APP_NAME}.ipa" | grep -q "Payload/.*\.app/Info.plist" && echo "✅ Info.plist var" || { echo "::error::Info.plist yox"; exit 1; }
-          unzip -l "${APP_NAME}.ipa" | grep -q "Frameworks/Capacitor.framework" && echo "✅ Capacitor.framework var" || { echo "::error::Capacitor yox"; exit 1; }
+          echo "IPA size: $(du -h ${APP_NAME}.ipa | cut -f1)"
+          unzip -l "${APP_NAME}.ipa" | grep -q "Payload/.*\.app/Info.plist" && echo "Info.plist OK" || { echo "::error::Info.plist missing"; exit 1; }
+          unzip -l "${APP_NAME}.ipa" | grep -q "Frameworks/Capacitor.framework" && echo "Capacitor OK" || { echo "::error::Capacitor missing"; exit 1; }
+          unzip -l "${APP_NAME}.ipa" | grep -q "LaunchScreen.storyboardc" && echo "LaunchScreen OK" || echo "::warning::LaunchScreen storyboard not compiled"
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
