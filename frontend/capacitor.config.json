@@ -7,29 +7,40 @@
     "contentInset": "always",
     "scheme": "Ryhavean",
     "limitsNavigationsToAppBoundDomains": false,
-    "backgroundColor": "#0a0a0bff"
+    "backgroundColor": "#0a0a0bff",
+    "preferredContentMode": "mobile",
+    "allowsLinkPreview": false,
+    "handleApplicationNotifications": true
   },
   "server": {
     "iosScheme": "https",
     "androidScheme": "https",
-    "cleartext": true,
+    "url": "https://ryhavean.vercel.app",
+    "cleartext": false,
     "allowNavigation": [
+      "ryhavean.vercel.app",
+      "*.vercel.app",
       "*.youtube.com",
       "*.googlevideo.com",
       "*.ytimg.com",
+      "*.ggpht.com",
       "ryhavean-spotify-backend.onrender.com",
       "*.firebaseio.com",
-      "*.firebaseapp.com"
+      "*.firebaseapp.com",
+      "*.gstatic.com"
     ]
   },
   "plugins": {
     "SplashScreen": {
-      "launchShowDuration": 1500,
+      "launchShowDuration": 2000,
       "launchAutoHide": true,
+      "launchFadeOutDuration": 300,
       "backgroundColor": "#0a0a0b",
       "showSpinner": false,
       "splashFullScreen": true,
-      "splashImmersive": true
+      "splashImmersive": true,
+      "iosSpinnerStyle": "small",
+      "useDialog": false
     }
   }
 }
